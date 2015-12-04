@@ -103,7 +103,7 @@ public:
     bool canFetchMore(const QModelIndex& ) const Q_DECL_OVERRIDE;
     void fetchMore(const QModelIndex&) Q_DECL_OVERRIDE;
 
-    ActivityList activityList() { return _finalList; }
+    ActivityList activityList();
 
 public slots:
     void slotRefreshActivity(AccountState* ast);
@@ -116,11 +116,11 @@ signals:
     void accountWithoutActivityApp(AccountState* ast);
 
 private:
+    void addNewActivities(const ActivityList& list);
     void startFetchJob(AccountState* s);
-    void combineActivityLists();
+    Activity findItem(int indx) const;
 
-    QMap<AccountState*, ActivityList> _activityLists;
-    ActivityList _finalList;
+    QList<ActivityList> _activityLists;
     QSet<AccountState*> _currentlyFetching;
 };
 
