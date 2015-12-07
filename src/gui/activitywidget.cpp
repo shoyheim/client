@@ -325,6 +325,26 @@ ActivityList ActivityListModel::activityList()
 }
 
 /* ==================================================================== */
+ActivitySortProxyModel::ActivitySortProxyModel(QObject *parent)
+    :QSortFilterProxyModel(parent)
+{
+
+}
+
+bool ActivitySortProxyModel::lessThan(const QModelIndex &left, const QModelIndex &right) const
+{
+    QVariant leftData = sourceModel()->data(left);
+    QVariant rightData = sourceModel()->data(right);
+
+    if (leftData.type() == QVariant::DateTime) {
+        return leftData.toDateTime() < rightData.toDateTime();
+    } else {
+        qDebug() << "OOOOO " << endl;
+    }
+    return true;
+}
+
+/* ==================================================================== */
 
 ActivityWidget::ActivityWidget(QWidget *parent) :
     QWidget(parent),
@@ -337,7 +357,10 @@ ActivityWidget::ActivityWidget(QWidget *parent) :
     _ui->_activityList->setMinimumWidth(400);
 #endif
 
-    _model = new ActivityListModel(this);
+
+    _model = new ActivitySortProxyModel(this);
+    _model->setSourceModel(new ActivityListModel);
+
     ActivityItemDelegate *delegate = new ActivityItemDelegate;
     delegate->setParent(this);
     _ui->_activityList->setItemDelegate(delegate);
@@ -366,12 +389,12 @@ ActivityWidget::~ActivityWidget()
 
 void ActivityWidget::slotRefresh(AccountState *ptr)
 {
-    _model->slotRefreshActivity(ptr);
+    qobject_cast<ActivityListModel*>(_model->sourceModel())->slotRefreshActivity(ptr);
 }
 
 void ActivityWidget::slotRemoveAccount( AccountState *ptr )
 {
-    _model->slotRemoveAccount(ptr);
+    qobject_cast<ActivityListModel*>(_model->sourceModel())->slotRemoveAccount(ptr);
 }
 
 void ActivityWidget::showLabels()
@@ -410,7 +433,7 @@ QString ActivityWidget::timeString(QDateTime dt, QLocale::FormatType format) con
 
 void ActivityWidget::storeActivityList( QTextStream& ts )
 {
-    ActivityList activities = _model->activityList();
+    ActivityList activities = qobject_cast<ActivityListModel*>(_model->sourceModel())->activityList();
 
     foreach( Activity activity, activities ) {
         ts << right
