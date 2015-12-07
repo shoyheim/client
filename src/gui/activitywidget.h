@@ -18,6 +18,7 @@
 #include <QDateTime>
 #include <QLocale>
 #include <QAbstractListModel>
+#include <QSortFilterProxyModel>
 
 #include "progressdispatcher.h"
 #include "owncloudgui.h"
@@ -124,6 +125,18 @@ private:
     QSet<AccountState*> _currentlyFetching;
 };
 
+class ActivitySortProxyModel : public QSortFilterProxyModel
+{
+    Q_OBJECT
+
+public:
+    ActivitySortProxyModel(QObject *parent = 0);
+
+protected:
+    bool lessThan(const QModelIndex &left, const QModelIndex &right) const Q_DECL_OVERRIDE;
+
+};
+
 /**
  * @brief The ActivityWidget class
  * @ingroup gui
@@ -160,7 +173,7 @@ private:
 
     QSet<QString> _accountsWithoutActivities;
 
-    ActivityListModel *_model;
+    ActivitySortProxyModel *_model;
 };
 
 
