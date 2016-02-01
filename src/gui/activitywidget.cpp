@@ -40,6 +40,68 @@
 
 namespace OCC {
 
+ActivityFile::ActivityFile()
+    :_type(Unknown)
+{
+
+}
+
+ActivityFile::ActivityFile( const QString& file )
+    :_relFileName(file),
+      _type(File)
+{
+
+}
+
+void ActivityFile::setType( FileType type )
+{
+    _type = type;
+}
+
+QString ActivityFile::relativePath() const
+{
+    return _relFileName;
+}
+
+QString ActivityFile::fullPath( const QString _accountName ) const
+{
+    QString fullPath(_relFileName);
+    // FIXME: get the account and prepend the base path.
+
+    if( _type == Directory && !fullPath.endsWith('/')) {
+        fullPath.append('/');
+    }
+    return fullPath;
+}
+
+/* ==================================================================== */
+
+void Activity::addFile( const QString& file )
+{
+    ActivityFile f(file);
+    _files.append(f);
+}
+
+void Activity::addDirectory( const QString& dir )
+{
+    ActivityFile f(dir);
+    f.setType(ActivityFile::Directory);
+    _files.append(f);
+}
+
+QVector<ActivityFile> Activity::files()
+{
+    return _files;
+}
+
+/* ==================================================================== */
+
+ActivityList::ActivityList()
+    :_lastId(0)
+{
+
+}
+
 void ActivityList::setAccountName( const QString& name )
 {
     _accountName = name;
@@ -48,6 +110,237 @@ void ActivityList::setAccountName( const QString& name )
 QString ActivityList::accountName() const
 {
     return _accountName;
+}
+
+int ActivityList::lastId() const
+{
+    return _lastId;
+}
+
+/* ==================================================================== */
+
+ActivityFetcher::ActivityFetcher()
+    : QObject()
+{
+
+}
+
+void ActivityFetcher::slotFetch(AccountState* s)
+{
+    if( !(s && s->isConnected() )) {
+        return;
+    }
+    JsonApiJob *job = new JsonApiJob(s->account(), QLatin1String("ocs/v1.php/cloud/activity"), this);
+    QObject::connect(job, SIGNAL(jsonReceived(QVariantMap, int)),
+                     this, SLOT(slotActivitiesReceived(QVariantMap, int)));
+    job->setProperty("AccountStatePtr", QVariant::fromValue<AccountState*>(s));
+
+    QList< QPair<QString,QString> > params;
+    params.append(qMakePair(QString::fromLatin1("page"),     QString::fromLatin1("0")));
+    params.append(qMakePair(QString::fromLatin1("pagesize"), QString::fromLatin1("100")));
+    job->addQueryParams(params);
+
+    qDebug() << "Start fetching activities for " << s->account()->displayName();
+    job->start();
+
+}
+
+void ActivityFetcher::slotActivitiesReceived(const QVariantMap& json, int statusCode)
+{
+    auto activities = json.value("ocs").toMap().value("data").toList();
+    qDebug() << "*** activities" << activities;
+
+    ActivityList list;
+    AccountState* ai = qvariant_cast<AccountState*>(sender()->property("AccountStatePtr"));
+    list.setAccountName( ai->account()->displayName());
+
+    foreach( auto activ, activities ) {
+        auto json = activ.toMap();
+
+        Activity a;
+        a._accName  = ai->account()->displayName();
+        a._id       = json.value("id").toLongLong();
+        a._subject  = json.value("subject").toString();
+        a._message  = json.value("message").toString();
+        const QString f = json.value("file").toString();
+        a.addFile(f);
+        a._link     = json.value("link").toUrl();
+        a._dateTime = json.value("date").toDateTime();
+        list.append(a);
+    }
+    // activity app is not enabled, signalling.
+    if( statusCode == 999 ) {
+        emit accountWithoutActivityApp(ai);
+    }
+
+    emit newActivityList(list);
+
+}
+
+/* ==================================================================== */
+
+ActivityFetcherV2::ActivityFetcherV2()
+    : ActivityFetcher()
+{
+
+}
+
+ActivityList ActivityFetcherV2::fetchFromDb( const QString& accountId )
+{
+    // TODO fetch from database
+    ActivityList dbActivities;
+
+    return dbActivities;
+}
+
+int ActivityFetcherV2::lastSeenId()
+{
+    int lastId = 0;
+
+    return lastId;
+}
+
+void ActivityFetcherV2::slotFetch(AccountState* s)
+{
+    if( !(s && s->isConnected() )) {
+        return;
+    }
+
+    JsonApiJob *job = new JsonApiJob(s->account(), QLatin1String("ocs/v2.php/apps/activity/api/v2/activity"), this);
+    QObject::connect(job, SIGNAL(jsonReceived(QVariantMap, int)),
+                     this, SLOT(slotActivitiesReceived(QVariantMap, int)));
+    job->setProperty("AccountStatePtr", QVariant::fromValue<AccountState*>(s));
+
+    QList< QPair<QString,QString> > params;
+
+    int lastId = lastSeenId();
+    if( lastId > 0 ) {
+        params.append(qMakePair(QString::fromLatin1("since"),  QString::number(lastId)));
+        job->addQueryParams(params);
+    }
+    qDebug() << "Start fetching V2 activities for " << s->account()->displayName();
+    job->start();
+}
+
+#define QL1(X) QLatin1String(X)
+
+bool ActivityFetcherV2::parseActionString( Activity *activity, const QString& subject, const QVariantList& params)
+{
+    // the action contains a string describing what happened
+    bool re = true;
+
+    if( subject == QL1("shared_user_self") ) {
+
+    } else if( subject == QL1("reshared_user_by") ) {
+
+    } else if( subject == QL1("shared_group_self") ) {
+
+    } else if( subject == QL1("reshared_group_by") ) {
+
+    } else if( subject == QL1("reshared_link_by") ) {
+
+    } else if( subject == QL1("shared_user_self") ) {
+
+    } else if( subject == QL1("created_self") ) {
+
+    } else if( subject == QL1("created_by") ) {
+
+    } else if( subject == QL1("created_public") ) {
+
+    } else if( subject == QL1("changed_self") ) {
+
+    } else if( subject == QL1("changed_by") ) {
+
+    } else if( subject == QL1("deleted_self") ) {
+
+    } else if( subject == QL1("deleted_by") ) {
+
+    } else if( subject == QL1("restored_self") ) {
+
+    } else if( subject == QL1("restored_by") ) {
+
+    } else {
+        // unknown action.
+        re = false;
+    }
+
+    // parse the params
+    foreach( QVariant v, params ) {
+        QVariantMap vm = v.toMap();
+
+        if( vm.contains("type") ) {
+            const QString type = vm.value("type").toString();
+            const QString val = vm.value("value").toString();
+
+            if( type == QL1("collection") ) {
+                QVariantList items = vm.value("value").toList();
+
+                foreach( QVariant vFile, items ) {
+                    QVariantMap vMap = vFile.toMap();
+                    const QString fileType = vMap.value("type").toString();
+                    const QString relFileName = vMap.value("value").toString();
+
+                    if( fileType != QL1("file")) {
+                        activity->addDirectory(relFileName);
+                    } else {
+                        activity->addFile(relFileName);
+                    }
+                }
+            } else if( type == QL1("file")) {
+                const QString relFileName = val;
+                activity->addFile(relFileName);
+            } else if( type == QL1("dir")) {
+                const QString relFileName = val;
+                activity->addDirectory(relFileName);
+                // needs verification!
+            } else if( type == QL1("username")) {
+                const QString user = val;
+            } else if( type == QL1("typeicon")) {
+                const QString icon = val;
+            } else {
+
+            }
+        }
+    }
+    return re;
+}
+
+void ActivityFetcherV2::slotActivitiesReceived(const QVariantMap& json, int statusCode)
+{
+    auto activities = json.value("ocs").toMap().value("data").toList();
+    qDebug() << "*** activities" << activities;
+
+    AccountState* ai = qvariant_cast<AccountState*>(sender()->property("AccountStatePtr"));
+    ActivityList list;
+
+    if( ai ) {
+        list = fetchFromDb(ai->account()->id());
+        list.setAccountName( ai->account()->displayName());
+
+        foreach( auto activ, activities ) {
+            auto json = activ.toMap();
+
+            Activity a;
+            a._accName  = ai->account()->displayName();
+            a._id       = json.value("activity_id").toLongLong();
+            QString subject = json.value("subject").toString();
+            QVariantList subjectParams = json.value("subjectparams").toList();
+            bool knownAction = parseActionString( &a, subject, subjectParams );
+
+            a._subject  = json.value("subject").toString();
+
+            a._message  = json.value("message_prepared").toString();
+            // a._file     = json.value("file").toString();
+            // a._link     = json.value("link").toUrl();
+            a._dateTime = json.value("datetime").toDateTime();
+            list.append(a);
+        }
+        // activity app is not enabled, signalling.
+        if( statusCode == 999 ) {
+            emit accountWithoutActivityApp(ai);
+        }
+    }
+    emit newActivityList(list);
 }
 
 /* ==================================================================== */
@@ -88,14 +381,18 @@ QVariant ActivityListModel::data(const QModelIndex &index, int role) const
     if (role == Qt::EditRole)
         return QVariant();
 
+    QString firstFile;
     switch (role) {
     case ActivityItemDelegate::PathRole:
-        list = FolderMan::instance()->findFileInLocalFolders(a._file, ast->account());
+        // FIXME: the activity can affect more than one file.
+        firstFile = a.files().at(0).relativePath();
+        list = FolderMan::instance()->findFileInLocalFolders(firstFile, ast->account());
         if( list.count() > 0 ) {
             return QVariant(list.at(0));
         }
         // File does not exist anymore? Let's try to open its path
-        list = FolderMan::instance()->findFileInLocalFolders(QFileInfo(a._file).path(), ast->account());
+        // FIXME: the activity can affect more than one file.
+        list = FolderMan::instance()->findFileInLocalFolders(QFileInfo(firstFile).path(), ast->account());
         if( list.count() > 0 ) {
             return QVariant(list.at(0));
         }
@@ -167,58 +464,29 @@ bool ActivityListModel::canFetchMore(const QModelIndex& ) const
 
 void ActivityListModel::startFetchJob(AccountState* s)
 {
-    if( !s->isConnected() ) {
+    if( !s ) return;
+    AccountState::State state = s->state();
+    if( state != AccountState::Connected ) {
         return;
     }
-    JsonApiJob *job = new JsonApiJob(s->account(), QLatin1String("ocs/v1.php/cloud/activity"), this);
-    QObject::connect(job, SIGNAL(jsonReceived(QVariantMap, int)),
-                     this, SLOT(slotActivitiesReceived(QVariantMap, int)));
-    job->setProperty("AccountStatePtr", QVariant::fromValue<AccountState*>(s));
 
-    QList< QPair<QString,QString> > params;
-    params.append(qMakePair(QString::fromLatin1("page"),     QString::fromLatin1("0")));
-    params.append(qMakePair(QString::fromLatin1("pagesize"), QString::fromLatin1("100")));
-    job->addQueryParams(params);
-
-    _currentlyFetching.insert(s);
-    qDebug() << "Start fetching activities for " << s->account()->displayName();
-    job->start();
-}
-
-void ActivityListModel::slotActivitiesReceived(const QVariantMap& json, int statusCode)
-{
-    auto activities = json.value("ocs").toMap().value("data").toList();
-    qDebug() << "*** activities" << activities;
-
-    ActivityList list;
-    AccountState* ai = qvariant_cast<AccountState*>(sender()->property("AccountStatePtr"));
-    _currentlyFetching.remove(ai);
-    list.setAccountName( ai->account()->displayName());
-
-    foreach( auto activ, activities ) {
-        auto json = activ.toMap();
-
-        Activity a;
-        a._accName  = ai->account()->displayName();
-        a._id       = json.value("id").toLongLong();
-        a._subject  = json.value("subject").toString();
-        a._message  = json.value("message").toString();
-        a._file     = json.value("file").toString();
-        a._link     = json.value("link").toUrl();
-        a._dateTime = json.value("date").toDateTime();
-        a._dateTime.setTimeSpec(Qt::UTC);
-        list.append(a);
-    }
-    // activity app is not enabled, signalling.
-    if( statusCode == 999 ) {
-        emit accountWithoutActivityApp(ai);
+    // FIXME - how is the fetcher deleted?
+    ActivityFetcher *fetcher;
+    int serverVer = s->account()->serverVersionInt();
+    if( serverVer < (9 << 16) ) {
+        fetcher = new ActivityFetcher;
+    } else {
+        fetcher = new ActivityFetcherV2;
     }
 
-    addNewActivities(list);
-
+    connect(fetcher, SIGNAL(newActivityList(ActivityList)),
+            this, SLOT(slotAddNewActivities(ActivityList)));
+    connect(fetcher, SIGNAL(accountWithoutActivityApp(AccountState*)),
+            this, SIGNAL(accountWithoutActivityApp(AccountState*)));
+    fetcher->slotFetch(s);
 }
 
-void ActivityListModel::addNewActivities(const ActivityList& list)
+void ActivityListModel::slotAddNewActivities(const ActivityList& list)
 {
     int startItem = 0; // the start number of items to delete in the virtual overall list
     int listIdx = 0;   // the index of the list that is to replace.
@@ -451,7 +719,7 @@ void ActivityWidget::storeActivityList( QTextStream& ts )
 
               // file
            << qSetFieldWidth(30)
-           << activity._file
+           << "FIXME" // FIXME: Add file again activity._file
               // separator
            << qSetFieldWidth(0) << ","
 
