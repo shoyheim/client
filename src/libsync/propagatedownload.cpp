@@ -29,6 +29,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QDebug>
+#include <QDateTime>
 #include <cmath>
 
 namespace OCC {
@@ -664,9 +665,11 @@ void PropagateDownloadFileQNAM::downloadFinished()
     }
 
     FileSystem::setModTime(_tmpFile.fileName(), _item->_modtime);
+    qDebug() << "OOOOOO Original timestamp" << _item->_modtime;
     // We need to fetch the time again because some file systems such as FAT have worse than a second
     // Accuracy, and we really need the time from the file system. (#3103)
     _item->_modtime = FileSystem::getModTime(_tmpFile.fileName());
+    qDebug() << "OOOOOO new timestamp" << _item->_modtime;
 
     if (FileSystem::fileExists(fn)) {
         // Preserve the existing file permissions.
