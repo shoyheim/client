@@ -53,3 +53,7 @@ list(APPEND FolderMan_SRC stub.cpp )
 #include_directories(${CMAKE_SOURCE_DIR}/src/3rdparty/qjson)
 owncloud_add_test(FolderMan "${FolderMan_SRC}")
 
+SET(Activity_SRC ../src/gui/activity.cpp)
+list(APPEND Activity_SRC ../src/libsync/account.cpp)
+list(APPEND Activity_SRC ../src/gui/accountstate.cpp)
+owncloud_add_test(Activity "${Activity_SRC}")
