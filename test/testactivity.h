@@ -30,11 +30,24 @@ private slots:
     }
 
     void testMarkupParser1() {
-        const QString markup1 = "<file id=\"12\" link=\"http://link/to/file\">a_file</file> was born";
 
         ActivityFetcherV2 f;
 
-        QVERIFY( QLatin1String("a_file was born") ==  f.removeMarkup(markup1));
+        QString markup = "<file id=\"12\" link=\"http://link/to/file\">a_file</file> was born";
+        QVERIFY( QLatin1String("a_file was born") ==  f.removeMarkup(markup));
+        
+        markup = "User <user id=\"12\" displayname=\"Goofy\">goofy</user> was here!";
+        QVERIFY( QLatin1String("User goofy was here!") == f.removeMarkup(markup));
+        
+        markup = "File <file id=\"32\">foo</file> and <file id=\"33\">bar</file>";
+        QString noMarkup = f.removeMarkup(markup);
+        qDebug() << "XXXX" << noMarkup;
+        QVERIFY(  noMarkup == QLatin1String("File foo and bar"));
+        
+        markup = "These files <collection><file>foo.txt</file> <file>bar.txt</file></collection>!";
+        noMarkup = f.removeMarkup(markup);
+        qDebug() << "XXXX" << noMarkup;
+        QVERIFY(  noMarkup == QLatin1String("These files foo.txt bar.txt!"));
 
     }
 };

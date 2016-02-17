@@ -300,22 +300,28 @@ QString ActivityFetcherV2::removeMarkup( const QString& str )
     QString l(str);
 
     QStringList tags;
+    tags.append( "collection");
     tags.append( "file");
     tags.append( "user");
 
     foreach( const QString tag, tags) {
-        QString cap;
-        const QString regStr("<" + tag +".*>(.+)</"+tag+">");
+        const QString regStr("<" + tag +".*>(.*)</"+tag+">");
         QRegExp rxp( regStr );
-        while( l.contains(rxp)) {
-            cap = rxp.cap(1);
-            cap = removeMarkup(cap);
-            l.replace(rxp, cap);
+        rxp.setMinimal(true);
+
+        int pos = l.indexOf(rxp);
+        while( pos != -1 ) {
+            QString cap = rxp.cap(1);
+            l.replace(pos, rxp.matchedLength(), cap);
+            pos = l.indexOf(rxp);
         }
     }
     return l;
 }
 
+//
+// Following documentation at https://github.com/owncloud/activity/issues/405
+//
 void ActivityFetcherV2::slotActivitiesReceived(const QVariantMap& json, int statusCode)
 {
     auto activities = json.value("ocs").toMap().value("data").toList();
