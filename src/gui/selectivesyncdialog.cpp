@@ -14,6 +14,7 @@
 #include "selectivesyncdialog.h"
 #include "folder.h"
 #include "account.h"
+#include "excludedfiles.h"
 #include "networkjobs.h"
 #include "theme.h"
 #include "folderman.h"
@@ -145,8 +146,10 @@ void SelectiveSyncTreeView::recursiveInsert(QTreeWidgetItem* parent, QStringList
             }
             item->setIcon(0, folderIcon);
             item->setText(0, pathTrail.first());
-            item->setText(1, Utility::octetsToString(size));
-            item->setData(1, Qt::UserRole, size);
+            if (size >= 0) {
+                item->setText(1, Utility::octetsToString(size));
+                item->setData(1, Qt::UserRole, size);
+            }
 //            item->setData(0, Qt::UserRole, pathTrail.first());
             item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
         }
@@ -174,21 +177,11 @@ void SelectiveSyncTreeView::slotUpdateDirectories(QStringList list)
         pathToRemove.append('/');
 
     // Check for excludes.
-    //
-    // We would like to use Folder::isFileExcluded, but the folder doesn't
-    // exist yet. So we just create one temporarily...
-    FolderDefinition def;
-    def.localPath = pathToRemove;
-    def.ignoreHiddenFiles = FolderMan::instance()->ignoreHiddenFiles();
-    Folder f(def);
     QMutableListIterator<QString> it(list);
     while (it.hasNext()) {
         it.next();
-        QString path = it.value();
-        path.remove(pathToRemove);
-        if (f.isFileExcludedRelative(path)) {
+        if (ExcludedFiles::instance().isExcluded(it.value(), pathToRemove, FolderMan::instance()->ignoreHiddenFiles()))
             it.remove();
-        }
     }
 
     // Since / cannot be in the blacklist, expand it to the actual
@@ -196,6 +189,7 @@ void SelectiveSyncTreeView::slotUpdateDirectories(QStringList list)
     if (_oldBlackList == QStringList("/")) {
         _oldBlackList.clear();
         foreach (QString path, list) {
+            path.remove(pathToRemove);
             if (path.isEmpty()) {
                 continue;
             }
@@ -228,6 +222,7 @@ void SelectiveSyncTreeView::slotUpdateDirectories(QStringList list)
         }
     }
 
+    Utility::sortFilenames(list);
     foreach (QString path, list) {
         auto size = job ? job->_sizes.value(path) : 0;
         path.remove(pathToRemove);
@@ -249,7 +244,7 @@ void SelectiveSyncTreeView::slotLscolFinishedWithError(QNetworkReply *r)
     if (r->error() == QNetworkReply::ContentNotFoundError) {
         _loading->setText(tr("No subfolders currently on the server."));
     } else {
-        _loading->setText(tr("An error occured while loading the list of sub folders."));
+        _loading->setText(tr("An error occurred while loading the list of sub folders."));
     }
     _loading->resize(_loading->sizeHint()); // because it's not in a layout
 }
@@ -397,12 +392,17 @@ qint64 SelectiveSyncTreeView::estimatedSize(QTreeWidgetItem* root)
 
 
 SelectiveSyncDialog::SelectiveSyncDialog(AccountPtr account, Folder* folder, QWidget* parent, Qt::WindowFlags f)
-    :   QDialog(parent, f), _folder(folder)
+    :   QDialog(parent, f), _folder(folder),
+      _okButton(0) // defined in init()
 {
+    bool ok;
     init(account, tr("Unchecked folders will be <b>removed</b> from your local file system and will not be synchronized to this computer anymore"));
-    _treeView->setFolderInfo(_folder->remotePath(), _folder->alias(),
-                             _folder->journalDb()->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList));
-
+    QStringList selectiveSyncList = _folder->journalDb()->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, &ok);
+    if( ok ) {
+        _treeView->setFolderInfo(_folder->remotePath(), _folder->alias(),selectiveSyncList);
+    } else {
+        _okButton->setEnabled(false);
+    }
     // Make sure we don't get crashes if the folder is destroyed while we are still open
     connect(_folder, SIGNAL(destroyed(QObject*)), this, SLOT(deleteLater()));
 }
@@ -428,9 +428,9 @@ void SelectiveSyncDialog::init(const AccountPtr &account, const QString &labelTe
     layout->addWidget(label);
     layout->addWidget(_treeView);
     QDialogButtonBox *buttonBox = new QDialogButtonBox(Qt::Horizontal);
+    _okButton = buttonBox->addButton(QDialogButtonBox::Ok);
+    connect(_okButton, SIGNAL(clicked()), this, SLOT(accept()));
     QPushButton *button;
-    button = buttonBox->addButton(QDialogButtonBox::Ok);
-    connect(button, SIGNAL(clicked()), this, SLOT(accept()));
     button = buttonBox->addButton(QDialogButtonBox::Cancel);
     connect(button, SIGNAL(clicked()), this, SLOT(reject()));
     layout->addWidget(buttonBox);
@@ -439,7 +439,11 @@ void SelectiveSyncDialog::init(const AccountPtr &account, const QString &labelTe
 void SelectiveSyncDialog::accept()
 {
     if (_folder) {
-        auto oldBlackListSet = _folder->journalDb()->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList).toSet();
+        bool ok;
+        auto oldBlackListSet = _folder->journalDb()->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, &ok).toSet();
+        if( ! ok ) {
+            return;
+        }
         QStringList blackList = _treeView->createBlackList();
         _folder->journalDb()->setSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, blackList);
 

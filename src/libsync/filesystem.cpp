@@ -43,6 +43,7 @@ extern "C" {
 #include "csync.h"
 #include "vio/csync_vio_local.h"
 #include "std/c_path.h"
+#include "std/c_string.h"
 }
 
 namespace OCC {
@@ -495,16 +496,16 @@ QString FileSystem::fileSystemForPath(const QString & path)
 }
 #endif
 
-#define BUFSIZE 1024*1024*10
+#define BUFSIZE qint64(500*1024)  // 500 KiB
 
 static QByteArray readToCrypto( const QString& filename, QCryptographicHash::Algorithm algo )
 {
-    const qint64 bufSize = BUFSIZE;
-    QByteArray buf(bufSize,0);
+    QFile file(filename);
+    const qint64 bufSize = qMin(BUFSIZE, file.size() + 1);
+    QByteArray buf(bufSize, Qt::Uninitialized);
     QByteArray arr;
     QCryptographicHash crypto( algo );
 
-    QFile file(filename);
     if (file.open(QIODevice::ReadOnly)) {
         qint64 size;
         while (!file.atEnd()) {
@@ -531,11 +532,11 @@ QByteArray FileSystem::calcSha1( const QString& filename )
 #ifdef ZLIB_FOUND
 QByteArray FileSystem::calcAdler32( const QString& filename )
 {
-    unsigned int adler = adler32(0L, Z_NULL, 0);
-    const qint64 bufSize = BUFSIZE;
-    QByteArray buf(bufSize, 0);
-
     QFile file(filename);
+    const qint64 bufSize = qMin(BUFSIZE, file.size() + 1);
+    QByteArray buf(bufSize, Qt::Uninitialized);
+
+    unsigned int adler = adler32(0L, Z_NULL, 0);
     if (file.open(QIODevice::ReadOnly)) {
         qint64 size;
         while (!file.atEnd()) {
@@ -587,6 +588,40 @@ bool FileSystem::remove(const QString &fileName, QString *errorString)
         return false;
     }
     return true;
+}
+
+bool FileSystem::isFileLocked(const QString& fileName)
+{
+#ifdef Q_OS_WIN
+    mbchar_t *wuri = c_utf8_path_to_locale(fileName.toUtf8());
+
+    // Check if file exists
+    DWORD attr = GetFileAttributesW(wuri);
+    if (attr != INVALID_FILE_ATTRIBUTES) {
+        // Try to open the file with as much access as possible..
+        HANDLE win_h = CreateFileW(
+                    wuri,
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS,
+                    NULL);
+
+        c_free_locale_string(wuri);
+        if (win_h == INVALID_HANDLE_VALUE) {
+            /* could not be opened, so locked? */
+            /* 32 == ERROR_SHARING_VIOLATION */
+            return true;
+        } else {
+            CloseHandle(win_h);
+        }
+    } else {
+        c_free_locale_string(wuri);
+    }
+#else
+    Q_UNUSED(fileName);
+#endif
+    return false;
 }
 
 } // namespace OCC

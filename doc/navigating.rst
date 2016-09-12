@@ -11,7 +11,7 @@ in the system tray (Windows, KDE), status bar (Mac OS X), or notification area
 .. figure:: images/icon.png
    :alt: Status icon, little cloud with green circle and white checkmark 
 
-The status indicator uses overlay icons to indicate the current status of your 
+The status indicator uses icons to indicate the current status of your 
 synchronization. The green circle with the white checkmark tells you that your 
 synchronization is current and you are connected to your ownCloud server.
 
@@ -24,7 +24,7 @@ The blue icon with the white semi-circles means synchronization is in progress.
    :alt: Status icon, little cloud with yellow circle and vertical parallel 
     lines
 
-The yellow overlay icon with the parallel lines tells you your synchronization 
+The yellow icon with the parallel lines tells you your synchronization 
 has been paused. (Most likely by you.)
 
 .. figure:: images/icon-offline.png
@@ -58,11 +58,13 @@ operations.
 This menu provides the following options:
 
 * Quick access to your accounts
+* Sync status
 * Recent Changes, showing latest activities
-* Status of your client version (whether it is up to date)
+* Settings
 * Help menu
+* Pause synchronizations
 * An option to log in or log out of all of your accounts at once
-* Quit ownCloud
+* Quit ownCloud, logging out and closing the client
 
 A left-click on your systray icon opens the desktop client to the account 
 settings window.
@@ -82,7 +84,7 @@ have the following features:
 * Connection status, showing which ownCloud server you are connected to, and 
   your ownCloud username.
 * An **Account** button, which contains a dropdown menu with **Add New**, 
-  **Sign In/Sign Out**, and **Remove**.
+  **Log Out**, and **Remove**.
 * Used and available space on the server.
 * Current synchronization status.
 * **Add Folder Sync Connection** button, which is active only when you have 
@@ -92,26 +94,17 @@ The little button with three dots (the overflow menu) that sits to the right of
 the sync status bar offers four additional options:
 
 * Open Folder
-* Choose What to Sync
+* Choose What to Sync (This appears only when your file tree is collapsed, and 
+  expands the file tree)
 * Pause Sync / Resume Sync
 * Remove folder sync connection
 
-**Open Folder** opens a file explorer window displaying the client-side folder
-that is being synced.
-
-**Choose What to Sync** opens the folder sync tree view. Use this to sync all 
-or only some of the folders in the folder tree.
+**Open Folder** opens your local ownCloud sync folder.
 
 **Pause Sync** pauses sync operations without making any changes to your 
 account. It will continue to update file and folder lists, without 
-downloading or updating files. To stop all sync activity use **Remove Sync**.
-
-**Resume Sync** resumes sync operations.
-
-**Remove Sync** removes the sync connection without removing the account. This 
-stops all sync activity, including file and folder list updates. If you want to 
-synchronize the folder tree again then click the **Add Folder Sync Connection** 
-button, and re-select the folder tree that you want to sync.
+downloading or updating files. To stop all sync activity use **Remove 
+Folder Sync Connection**.
 
 .. figure:: images/client-7.png
    :alt: Extra options for sync operations
@@ -130,6 +123,39 @@ account, and then follow the account creation wizard. The new account will
 appear as a new tab in the settings dialog, where you can adjust its settings at 
 any time. Use **Account** > **Remove** to delete accounts. 
 
+File Manager Overlay Icons
+--------------------------
+
+The ownCloud sync client provides overlay icons, in addition to the normal file 
+type icons, for your system file manager (Explorer on Windows, Finder on Mac and 
+Nautilus on Linux) to indicate the sync status of your ownCloud files.
+
+The overlay icons are similar to the systray icons introduced above. They 
+behave differently on files and directories according to sync status 
+and errors. 
+
+The overlay icon of an individual file indicates its current sync state. If the
+file is in sync with the server version, it displays a green checkmark.
+
+If the file is ignored from syncing, for example because it is on your 
+exclude list, or because it is a symbolic link, it displays a warning icon.
+
+If there is a sync error, or the file is blacklisted, it displays an 
+eye-catching red X.
+
+If the file is waiting to be synced, or is currently syncing, the overlay 
+icon displays a blue cycling icon.
+
+When the client is offline, no icons are shown to reflect that the 
+folder is currently out of sync and no changes are synced to the server. 
+
+The overlay icon of a synced directory indicates the status of the files in the 
+directory. If there are any sync errors, the directory is marked with a warning 
+icon.
+
+If a directory includes ignored files that are marked with warning icons 
+that does not change the status of the parent directories.
+
 Sharing From Your Desktop
 -------------------------
 
@@ -139,9 +165,7 @@ the ``owncloud-client-nautilus`` plugin.) You can create share links, and share
 with internal ownCloud users the same way as in your ownCloud Web interface.
 
 .. figure:: images/mac-share.png
-   :alt: Sync client integration in Finder on Mac OS X.
-   
-   *Shared ownCloud files in Finder on Mac OS X*
+   :alt: Sync client integration in Windows Explorer.
    
 Right-click your systray icon, hover over the account you want to use, and 
 left-click "Open folder [folder name] to quickly enter your local ownCloud 
@@ -170,6 +194,25 @@ such as files not synced.
 
 .. figure:: images/client-8.png
    :alt: Activity windows logs all server and client activities.
+   
+Server Notifications
+--------------------
+
+Starting with version 2.2.0, the client will display notifications from your 
+ownCloud server that require manual interaction by you. For example, when a 
+user on a remote ownCloud creates a new Federated share for you, you can accept 
+it from your desktop client.
+
+The desktop client automatically checks for available notifications 
+automatically on a regular basis. Notifications are displayed in the Server 
+Activity tab, and if you have **Show Desktop Notifications** enabled (General 
+tab) you'll also see a systray notification.
+
+.. figure:: images/client12.png
+   :alt: Activity window with notification.
+
+This also displays notifications sent to users by the ownCloud admin via the 
+Announcements app.
 
 General Window
 --------------
@@ -206,10 +249,12 @@ can use the *Ignored Files Editor* (General tab.)
 
 .. figure:: images/ignored_files_editor.png
 
-For your convenience, the editor is pre-populated with a default list of typical 
+For your convenience, the editor is pre-populated with a default list of 
+typical 
 ignore patterns. These patterns are contained in a system file (typically 
 ``sync-exclude.lst``) located in the ownCloud Client application directory. You 
-cannot modify these pre-populated patterns directly from the editor. However, if 
+cannot modify these pre-populated patterns directly from the editor. However, 
+if 
 necessary, you can hover over any pattern in the list to show the path and 
 filename associated with that pattern, locate the file, and edit the 
 ``sync-exclude.lst`` file.

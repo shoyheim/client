@@ -300,10 +300,14 @@ void SqlQuery::bindValue(int pos, const QVariant& value)
                 res = sqlite3_bind_text16(_stmt, pos, str->utf16(),
                                           (str->size()) * sizeof(QChar), SQLITE_TRANSIENT);
             } else {
-                // unbound value create a null entry.
-                res = SQLITE_OK;
+                res = sqlite3_bind_null(_stmt, pos);
             }
             break; }
+        case QVariant::ByteArray: {
+            auto ba = value.toByteArray();
+            res = sqlite3_bind_text(_stmt, pos, ba.constData(), ba.size(), SQLITE_TRANSIENT);
+            break;
+        }
         default: {
             QString str = value.toString();
             // SQLITE_TRANSIENT makes sure that sqlite buffers the data
@@ -313,7 +317,7 @@ void SqlQuery::bindValue(int pos, const QVariant& value)
         }
     }
     if (res != SQLITE_OK) {
-        qDebug() << Q_FUNC_INFO << "ERROR" << value.toString() << res;
+        qDebug() << Q_FUNC_INFO << "ERROR" << value << res;
     }
     Q_ASSERT( res == SQLITE_OK );
 }
@@ -349,6 +353,11 @@ QString SqlQuery::error() const
     return _error;
 }
 
+int SqlQuery::errorId() const
+{
+    return _errId;
+}
+
 QString SqlQuery::lastQuery() const
 {
     return _sql;
@@ -365,9 +374,10 @@ void SqlQuery::finish()
     _stmt = 0;
 }
 
-void SqlQuery::reset()
+void SqlQuery::reset_and_clear_bindings()
 {
     SQLITE_DO(sqlite3_reset(_stmt));
+    SQLITE_DO(sqlite3_clear_bindings(_stmt));
 }
 
 } // namespace OCC

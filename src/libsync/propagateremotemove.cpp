@@ -80,8 +80,8 @@ void PropagateRemoteMove::start()
         QString versionString = _propagator->account()->serverVersion();
         if (versionString.contains('.') && versionString.split('.')[0].toInt() < 7) {
             QString originalFile(_propagator->getFilePath(QLatin1String("Shared")));
-            _propagator->addTouchedFile(originalFile);
-            _propagator->addTouchedFile(targetFile);
+            emit _propagator->touchedFile(originalFile);
+            emit _propagator->touchedFile(targetFile);
             QString renameError;
             if( FileSystem::rename(targetFile, originalFile, &renameError) ) {
                 done(SyncFileItem::NormalError, tr("This folder must not be renamed. It is renamed back to its original name."));
@@ -97,7 +97,7 @@ void PropagateRemoteMove::start()
                         _propagator->_remoteDir + _item->_renameTarget,
                         this);
     connect(_job, SIGNAL(finishedSignal()), this, SLOT(slotMoveJobFinished()));
-    _propagator->_activeJobs++;
+    _propagator->_activeJobList.append(this);
     _job->start();
 
 }
@@ -110,7 +110,7 @@ void PropagateRemoteMove::abort()
 
 void PropagateRemoteMove::slotMoveJobFinished()
 {
-    _propagator->_activeJobs--;
+    _propagator->_activeJobList.removeOne(this);
 
     Q_ASSERT(_job);
 
@@ -154,14 +154,27 @@ void PropagateRemoteMove::finalize()
 {
     SyncJournalFileRecord oldRecord =
             _propagator->_journal->getFileRecord(_item->_originalFile);
+    // if reading from db failed still continue hoping that deleteFileRecord
+    // reopens the db successfully.
+    // The db is only queried to transfer the content checksum from the old
+    // to the new record. It is not a problem to skip it here.
     _propagator->_journal->deleteFileRecord(_item->_originalFile);
 
     SyncJournalFileRecord record(*_item, _propagator->getFilePath(_item->_renameTarget));
     record._path = _item->_renameTarget;
-    record._contentChecksum = oldRecord._contentChecksum;
-    record._contentChecksumType = oldRecord._contentChecksumType;
+    if (oldRecord.isValid()) {
+        record._contentChecksum = oldRecord._contentChecksum;
+        record._contentChecksumType = oldRecord._contentChecksumType;
+        if (record._fileSize != oldRecord._fileSize) {
+            qDebug() << "Warning: file sizes differ on server vs csync_journal: " << record._fileSize << oldRecord._fileSize;
+            record._fileSize = oldRecord._fileSize; // server might have claimed different size, we take the old one from the DB
+        }
+    }
 
-    _propagator->_journal->setFileRecord(record);
+    if (!_propagator->_journal->setFileRecord(record)) {
+        done(SyncFileItem::FatalError, tr("Error writing metadata to the database"));
+        return;
+    }
     _propagator->_journal->commit("Remote Rename");
     done(SyncFileItem::Success);
 }

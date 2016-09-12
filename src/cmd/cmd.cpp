@@ -18,6 +18,7 @@
 #include <QStringList>
 #include <QUrl>
 #include <QFile>
+#include <QFileInfo>
 #include <qdebug.h>
 
 #include "account.h"
@@ -153,7 +154,7 @@ void help()
     std::cout << "                         Proxy is http://server:port" << std::endl;
     std::cout << "  --trust                Trust the SSL certification." << std::endl;
     std::cout << "  --exclude [file]       Exclude list file" << std::endl;
-    std::cout << "  --unsyncedfolders [file]    File containing the list of unsynced folders (selective sync)" << std::endl;
+    std::cout << "  --unsyncedfolders [file]    File containing the list of unsynced remote folders (selective sync)" << std::endl;
     std::cout << "  --user, -u [name]      Use [name] as the login name" << std::endl;
     std::cout << "  --password, -p [pass]  Use [pass] as password" << std::endl;
     std::cout << "  -n                     Use netrc (5) for login" << std::endl;
@@ -196,10 +197,12 @@ void parseOptions( const QStringList& app_args, CmdOptions *options )
     if (!options->source_dir.endsWith('/')) {
         options->source_dir.append('/');
     }
-    if( !QFile::exists( options->source_dir )) {
+    QFileInfo fi(options->source_dir);
+    if( !fi.exists() ) {
         std::cerr << "Source dir '" << qPrintable(options->source_dir) << "' does not exist." << std::endl;
         exit(1);
     }
+    options->source_dir = fi.absoluteFilePath();
 
     QStringListIterator it(args);
     // skip file name;
@@ -249,28 +252,34 @@ void parseOptions( const QStringList& app_args, CmdOptions *options )
  */
 void selectiveSyncFixup(OCC::SyncJournalDb *journal, const QStringList &newList)
 {
-    if (!journal->exists()) {
-        return;
-    }
-
     SqlDatabase db;
     if (!db.openOrCreateReadWrite(journal->databaseFilePath())) {
         return;
     }
 
-    auto oldBlackListSet = journal->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList).toSet();
-    auto blackListSet = newList.toSet();
-    auto changes = (oldBlackListSet - blackListSet) + (blackListSet - oldBlackListSet);
-    foreach(const auto &it, changes) {
-        journal->avoidReadFromDbOnNextSync(it);
-    }
+    bool ok;
 
-    journal->setSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, newList);
+    auto oldBlackListSet = journal->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, &ok).toSet();
+    if( ok ) {
+        auto blackListSet = newList.toSet();
+        auto changes = (oldBlackListSet - blackListSet) + (blackListSet - oldBlackListSet);
+        foreach(const auto &it, changes) {
+            journal->avoidReadFromDbOnNextSync(it);
+        }
+
+        journal->setSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, newList);
+    }
 }
 
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+
+#ifdef Q_OS_WIN
+    // Ensure OpenSSL config file is only loaded from app directory
+    QString opensslConf = QCoreApplication::applicationDirPath()+QString("/openssl.cnf");
+    qputenv("OPENSSL_CONF", opensslConf.toLocal8Bit());
+#endif
 
     qsrand(QTime::currentTime().msec() * QCoreApplication::applicationPid());
 
@@ -385,25 +394,9 @@ int main(int argc, char **argv) {
     int restartCount = 0;
 restart_sync:
 
-    CSYNC *_csync_ctx;
-
-    if( csync_create( &_csync_ctx, options.source_dir.toUtf8(),
-                      remUrl.constData()) < 0 ) {
-        qFatal("Unable to create csync-context!");
-        return EXIT_FAILURE;
-    }
-
     csync_set_log_level(options.silent ? 1 : 11);
 
     opts = &options;
-
-    if( csync_init( _csync_ctx ) < 0 ) {
-        qFatal("Could not initialize csync!");
-        return EXIT_FAILURE;
-    }
-
-    // ignore hidden files or not
-    _csync_ctx->ignore_hidden_files = options.ignoreHiddenFiles;
 
     if( !options.proxy.isNull() ) {
         QString host;
@@ -431,18 +424,6 @@ restart_sync:
         }
     }
 
-    // Exclude lists
-    QString systemExcludeListFn = ConfigFile::excludeFileFromSystem();
-    int loadedSystemExcludeList = false;
-    if (!systemExcludeListFn.isEmpty()) {
-        loadedSystemExcludeList = csync_add_exclude_list(_csync_ctx, systemExcludeListFn.toLocal8Bit());
-    }
-
-    int loadedUserExcludeList = false;
-    if (!options.exclude.isEmpty()) {
-        loadedUserExcludeList = csync_add_exclude_list(_csync_ctx, options.exclude.toLocal8Bit());
-    }
-
     QStringList selectiveSyncList;
     if (!options.unsyncedfolders.isEmpty()) {
         QFile f(options.unsyncedfolders);
@@ -460,29 +441,42 @@ restart_sync:
         }
     }
 
-
-    if (loadedSystemExcludeList != 0 && loadedUserExcludeList != 0) {
-        // Always make sure at least one list has been loaded
-        qFatal("Cannot load system exclude list or list supplied via --exclude");
-        return EXIT_FAILURE;
-    }
-
     Cmd cmd;
     SyncJournalDb db(options.source_dir);
     if (!selectiveSyncList.empty()) {
         selectiveSyncFixup(&db, selectiveSyncList);
     }
 
-    SyncEngine engine(account, _csync_ctx, options.source_dir, QUrl(options.target_url).path(), folder, &db);
+    SyncEngine engine(account, options.source_dir, QUrl(options.target_url), folder, &db);
+    engine.setIgnoreHiddenFiles(options.ignoreHiddenFiles);
     QObject::connect(&engine, SIGNAL(finished(bool)), &app, SLOT(quit()));
     QObject::connect(&engine, SIGNAL(transmissionProgress(ProgressInfo)), &cmd, SLOT(transmissionProgressSlot()));
+
+
+    // Exclude lists
+
+    bool hasUserExcludeFile = !options.exclude.isEmpty();
+    QString systemExcludeFile = ConfigFile::excludeFileFromSystem();
+
+    // Always try to load the user-provided exclude list if one is specified
+    if ( hasUserExcludeFile ) {
+        engine.excludedFiles().addExcludeFilePath(options.exclude);
+    }
+    // Load the system list if available, or if there's no user-provided list
+    if ( !hasUserExcludeFile || QFile::exists(systemExcludeFile) ) {
+        engine.excludedFiles().addExcludeFilePath(systemExcludeFile);
+    }
+
+    if (!engine.excludedFiles().reloadExcludes()) {
+        qFatal("Cannot load system exclude list or list supplied via --exclude");
+        return EXIT_FAILURE;
+    }
+
 
     // Have to be done async, else, an error before exec() does not terminate the event loop.
     QMetaObject::invokeMethod(&engine, "startSync", Qt::QueuedConnection);
 
     app.exec();
-
-    csync_destroy(_csync_ctx);
 
     if (engine.isAnotherSyncNeeded()) {
         if (restartCount < options.restartTimes) {

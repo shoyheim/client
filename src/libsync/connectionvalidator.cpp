@@ -122,12 +122,16 @@ void ConnectionValidator::slotStatusFound(const QUrl&url, const QVariantMap &inf
     QString version = CheckServerJob::version(info);
     _account->setServerVersion(version);
 
+    // We cannot deal with servers < 5.0.0
     if (version.contains('.') && version.split('.')[0].toInt() < 5) {
         _errors.append( tr("The configured server for this client is too old") );
         _errors.append( tr("Please update to the latest server and restart the client.") );
         reportResult( ServerVersionMismatch );
         return;
     }
+
+    // We attempt to work with servers >= 5.0.0 but warn users.
+    // Check usages of Account::serverVersionUnsupported() for details.
 
     // now check the authentication
     if (_account->credentials()->ready())
@@ -173,7 +177,7 @@ void ConnectionValidator::checkAuthentication()
     job->setTimeout(timeoutToUseMsec);
     job->setProperties(QList<QByteArray>() << "getlastmodified");
     connect(job, SIGNAL(result(QVariantMap)), SLOT(slotAuthSuccess()));
-    connect(job, SIGNAL(networkError(QNetworkReply*)), SLOT(slotAuthFailed(QNetworkReply*)));
+    connect(job, SIGNAL(finishedWithError(QNetworkReply*)), SLOT(slotAuthFailed(QNetworkReply*)));
     job->start();
 }
 
@@ -215,6 +219,7 @@ void ConnectionValidator::slotAuthSuccess()
 void ConnectionValidator::checkServerCapabilities()
 {
     JsonApiJob *job = new JsonApiJob(_account, QLatin1String("ocs/v1.php/cloud/capabilities"), this);
+    job->setTimeout(timeoutToUseMsec);
     QObject::connect(job, SIGNAL(jsonReceived(QVariantMap, int)), this, SLOT(slotCapabilitiesRecieved(QVariantMap)));
     job->start();
 }

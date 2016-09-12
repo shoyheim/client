@@ -34,7 +34,7 @@ QString Progress::asResultString( const SyncFileItem& item)
             return QCoreApplication::translate( "progress", "Uploaded");
         }
     case CSYNC_INSTRUCTION_CONFLICT:
-        return QCoreApplication::translate( "progress", "Downloaded, renamed conflicting file");
+        return QCoreApplication::translate( "progress", "Server version downloaded, copied changed local file into conflict file");
     case CSYNC_INSTRUCTION_REMOVE:
         return QCoreApplication::translate( "progress", "Deleted");
     case CSYNC_INSTRUCTION_EVAL_RENAME:
@@ -46,6 +46,8 @@ QString Progress::asResultString( const SyncFileItem& item)
         return QCoreApplication::translate( "progress", "Filesystem access error");
     case CSYNC_INSTRUCTION_ERROR:
         return QCoreApplication::translate( "progress", "Error");
+    case CSYNC_INSTRUCTION_UPDATE_METADATA:
+        return QCoreApplication::translate( "progress", "Updated local metadata");
     case CSYNC_INSTRUCTION_NONE:
     case CSYNC_INSTRUCTION_EVAL:
         return QCoreApplication::translate( "progress", "Unknown");
@@ -76,6 +78,8 @@ QString Progress::asActionString( const SyncFileItem &item )
         return QCoreApplication::translate( "progress", "error");
     case CSYNC_INSTRUCTION_ERROR:
         return QCoreApplication::translate( "progress", "error");
+    case CSYNC_INSTRUCTION_UPDATE_METADATA:
+        return QCoreApplication::translate( "progress", "updating local metadata");
     case CSYNC_INSTRUCTION_NONE:
     case CSYNC_INSTRUCTION_EVAL:
         break;
@@ -127,27 +131,58 @@ void ProgressDispatcher::setProgressInfo(const QString& folder, const ProgressIn
     emit progressInfo( folder, progress );
 }
 
-void ProgressInfo::start()
+ProgressInfo::ProgressInfo()
 {
     connect(&_updateEstimatesTimer, SIGNAL(timeout()), SLOT(updateEstimates()));
+    reset();
+}
+
+void ProgressInfo::reset()
+{
+    _currentItems.clear();
+    _currentDiscoveredFolder.clear();
+    _sizeProgress = Progress();
+    _fileProgress = Progress();
+    _totalSizeOfCompletedJobs = 0;
+    _maxBytesPerSecond = 100000.0;
+    _maxFilesPerSecond = 2.0;
+    _updateEstimatesTimer.stop();
+}
+
+void ProgressInfo::startEstimateUpdates()
+{
     _updateEstimatesTimer.start(1000);
 }
 
-bool ProgressInfo::hasStarted() const
+bool ProgressInfo::isUpdatingEstimates() const
 {
     return _updateEstimatesTimer.isActive();
 }
 
+static bool shouldCountProgress(const SyncFileItem &item)
+{
+    const auto instruction = item._instruction;
+
+    // Skip any ignored, error or non-propagated files and directories.
+    if (instruction == CSYNC_INSTRUCTION_NONE
+            || instruction == CSYNC_INSTRUCTION_UPDATE_METADATA
+            || instruction == CSYNC_INSTRUCTION_IGNORE
+            || instruction == CSYNC_INSTRUCTION_ERROR) {
+        return false;
+    }
+
+    return true;
+}
+
 void ProgressInfo::adjustTotalsForFile(const SyncFileItem &item)
 {
-    if (!item._isDirectory) {
-        _fileProgress._total++;
-        if (isSizeDependent(item)) {
-            _sizeProgress._total += item._size;
-        }
-    } else if (item._instruction != CSYNC_INSTRUCTION_NONE) {
-        // Added or removed directories certainly count.
-        _fileProgress._total++;
+    if (!shouldCountProgress(item)) {
+        return;
+    }
+
+    _fileProgress._total += item._affectedItems;
+    if (isSizeDependent(item)) {
+        _sizeProgress._total += item._size;
     }
 }
 
@@ -178,6 +213,10 @@ quint64 ProgressInfo::completedSize() const
 
 void ProgressInfo::setProgressComplete(const SyncFileItem &item)
 {
+    if (!shouldCountProgress(item)) {
+        return;
+    }
+
     _currentItems.remove(item._file);
     _fileProgress.setCompleted(_fileProgress._completed + item._affectedItems);
     if (ProgressInfo::isSizeDependent(item)) {
@@ -189,6 +228,10 @@ void ProgressInfo::setProgressComplete(const SyncFileItem &item)
 
 void ProgressInfo::setProgressItem(const SyncFileItem &item, quint64 completed)
 {
+    if (!shouldCountProgress(item)) {
+        return;
+    }
+
     _currentItems[item._file]._item = item;
     _currentItems[item._file]._progress._total = item._size;
     _currentItems[item._file]._progress.setCompleted(completed);
@@ -233,13 +276,6 @@ ProgressInfo::Estimates ProgressInfo::totalProgress() const
     // assume the remaining transfer will be done with the highest speed
     // we've seen.
 
-    // This assumes files and transfers finish as quickly as possible
-    // *but* note that maxPerSecond could be serious underestimates
-    // (if we never got to fully excercise transfer or files/second)
-    quint64 optimisticEta =
-            _fileProgress.remaining()  / _maxFilesPerSecond * 1000
-            + _sizeProgress.remaining() / _maxBytesPerSecond * 1000;
-
     // Compute a value that is 0 when fps is <=L*max and 1 when fps is >=U*max
     double fps = _fileProgress._progressPerSec;
     double fpsL = 0.5;
@@ -263,9 +299,24 @@ ProgressInfo::Estimates ProgressInfo::totalProgress() const
 
     double beOptimistic = nearMaxFps * slowTransfer;
     size.estimatedEta = (1.0 - beOptimistic) * size.estimatedEta
-                        + beOptimistic * optimisticEta;
+                        + beOptimistic * optimisticEta();
 
     return size;
+}
+
+quint64 ProgressInfo::optimisticEta() const
+{
+    // This assumes files and transfers finish as quickly as possible
+    // *but* note that maxPerSecond could be serious underestimate
+    // (if we never got to fully excercise transfer or files/second)
+
+    return _fileProgress.remaining() / _maxFilesPerSecond * 1000
+            + _sizeProgress.remaining() / _maxBytesPerSecond * 1000;
+}
+
+bool ProgressInfo::trustEta() const
+{
+    return totalProgress().estimatedEta < 100 * optimisticEta();
 }
 
 ProgressInfo::Estimates ProgressInfo::fileProgress(const SyncFileItem &item) const

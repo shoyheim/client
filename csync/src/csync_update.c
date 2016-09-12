@@ -245,33 +245,9 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
   st->etag = NULL;
   st->child_modified = 0;
   st->has_ignored_files = 0;
-
-  /* FIXME: Under which conditions are the following two ifs true and the code
-   * is executed? */
   if (type == CSYNC_FTW_TYPE_FILE ) {
     if (fs->mtime == 0) {
       CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "file: %s - mtime is zero!", path);
-
-      tmp = csync_statedb_get_stat_by_hash(ctx, h);
-      if(_last_db_return_error(ctx)) {
-          SAFE_FREE(st);
-          SAFE_FREE(tmp);
-          ctx->status_code = CSYNC_STATUS_UNSUCCESSFUL;
-          return -1;
-      }
-
-      if (tmp == NULL) {
-        CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "file: %s - not found in db, IGNORE!", path);
-        st->instruction = CSYNC_INSTRUCTION_IGNORE;
-      } else {
-        SAFE_FREE(st);
-        st = tmp;
-        st->instruction = CSYNC_INSTRUCTION_NONE;
-        CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "file: %s - tmp non zero, mtime %lu", path, st->modtime );
-        tmp = NULL;
-      }
-      goto fastout; /* Skip copying of the etag. That's an important difference to upstream
-                     * without etags. */
     }
   }
 
@@ -293,7 +269,8 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
     tmp = csync_statedb_get_stat_by_hash(ctx, h);
 
     if(_last_db_return_error(ctx)) {
-        SAFE_FREE(st);
+        csync_file_stat_free(st);
+        csync_file_stat_free(tmp);
         ctx->status_code = CSYNC_STATUS_UNSUCCESSFUL;
         return -1;
     }
@@ -321,7 +298,10 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
                  // zero size in statedb can happen during migration
                  || (tmp->size != 0 && fs->size != tmp->size))) {
 
-            if (fs->size == tmp->size && tmp->checksumTypeId) {
+            // Checksum comparison at this stage is only enabled for .eml files,
+            // check #4754 #4755
+            bool isEmlFile = csync_fnmatch("*.eml", file, FNM_CASEFOLD) == 0;
+            if (isEmlFile && fs->size == tmp->size && tmp->checksumTypeId) {
                 if (ctx->callbacks.checksum_hook) {
                     st->checksum = ctx->callbacks.checksum_hook(
                                 file, tmp->checksumTypeId,
@@ -333,8 +313,8 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
                     checksumIdentical = strncmp(st->checksum, tmp->checksum, 1000) == 0;
                 }
                 if (checksumIdentical) {
-                    st->instruction = CSYNC_INSTRUCTION_NONE;
-                    st->should_update_metadata = true;
+                    CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "NOTE: Checksums are identical, file did not actually change: %s", path);
+                    st->instruction = CSYNC_INSTRUCTION_UPDATE_METADATA;
                     goto out;
                 }
             }
@@ -360,23 +340,24 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
             CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "Reading from database: %s", path);
             ctx->remote.read_from_db = true;
         }
-        if (metadata_differ) {
-            /* file id or permissions has changed. Which means we need to update them in the DB. */
-            CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "Need to update metadata for: %s", path);
-            st->should_update_metadata = true;
-        }
         /* If it was remembered in the db that the remote dir has ignored files, store
          * that so that the reconciler can make advantage of.
          */
         if( ctx->current == REMOTE_REPLICA ) {
             st->has_ignored_files = tmp->has_ignored_files;
         }
-        st->instruction = CSYNC_INSTRUCTION_NONE;
+        if (metadata_differ) {
+            /* file id or permissions has changed. Which means we need to update them in the DB. */
+            CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "Need to update metadata for: %s", path);
+            st->instruction = CSYNC_INSTRUCTION_UPDATE_METADATA;
+        } else {
+            st->instruction = CSYNC_INSTRUCTION_NONE;
+        }
     } else {
         enum csync_vio_file_type_e tmp_vio_type = CSYNC_VIO_FILE_TYPE_UNKNOWN;
 
         /* tmp might point to malloc mem, so free it here before reusing tmp  */
-        SAFE_FREE(tmp);
+        csync_file_stat_free(tmp);
 
         /* check if it's a file and has been renamed */
         if (ctx->current == LOCAL_REPLICA) {
@@ -385,7 +366,7 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
             tmp = csync_statedb_get_stat_by_inode(ctx, fs->inode);
 
             if(_last_db_return_error(ctx)) {
-                SAFE_FREE(st);
+                csync_file_stat_free(st);
                 ctx->status_code = CSYNC_STATUS_UNSUCCESSFUL;
                 return -1;
             }
@@ -441,7 +422,7 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
             tmp = csync_statedb_get_stat_by_file_id(ctx, fs->file_id);
 
             if(_last_db_return_error(ctx)) {
-                SAFE_FREE(st);
+                csync_file_stat_free(st);
                 ctx->status_code = CSYNC_STATUS_UNSUCCESSFUL;
                 return -1;
             }
@@ -470,7 +451,7 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
 
                 if (fs->type == CSYNC_VIO_FILE_TYPE_DIRECTORY && ctx->current == REMOTE_REPLICA && ctx->callbacks.checkSelectiveSyncNewFolderHook) {
                     if (ctx->callbacks.checkSelectiveSyncNewFolderHook(ctx->callbacks.update_callback_userdata, path)) {
-                        SAFE_FREE(st);
+                        csync_file_stat_free(st);
                         return 1;
                     }
                 }
@@ -480,7 +461,7 @@ static int _csync_detect_update(CSYNC *ctx, const char *file,
     }
   } else  {
       CSYNC_LOG(CSYNC_LOG_PRIORITY_DEBUG, "Unable to open statedb" );
-      SAFE_FREE(st);
+      csync_file_stat_free(st);
       ctx->status_code = CSYNC_STATUS_UNSUCCESSFUL;
       return -1;
   }
@@ -496,6 +477,8 @@ out:
               st->error_status = CSYNC_STATUS_INDIVIDUAL_IGNORE_LIST; /* File listed on ignore list. */
           } else if (excluded == CSYNC_FILE_EXCLUDE_INVALID_CHAR) {
               st->error_status = CSYNC_STATUS_INDIVIDUAL_IS_INVALID_CHARS;  /* File contains invalid characters. */
+          } else if (excluded == CSYNC_FILE_EXCLUDE_TRAILING_SPACE) {
+              st->error_status = CSYNC_STATUS_INDIVIDUAL_TRAILING_SPACE; /* File ends with a trailing space. */
           } else if (excluded == CSYNC_FILE_EXCLUDE_LONG_FILENAME) {
               st->error_status = CSYNC_STATUS_INDIVIDUAL_EXCLUDE_LONG_FILENAME; /* File name is too long. */
           } else if (excluded == CSYNC_FILE_EXCLUDE_HIDDEN ) {
@@ -505,7 +488,9 @@ out:
           }
       }
   }
-  if (st->instruction != CSYNC_INSTRUCTION_NONE && st->instruction != CSYNC_INSTRUCTION_IGNORE
+  if (st->instruction != CSYNC_INSTRUCTION_NONE
+      && st->instruction != CSYNC_INSTRUCTION_IGNORE
+      && st->instruction != CSYNC_INSTRUCTION_UPDATE_METADATA
       && type != CSYNC_FTW_TYPE_DIR) {
     st->child_modified = 1;
   }
@@ -535,7 +520,6 @@ out:
       strncpy(st->remotePerm, fs->remotePerm, REMOTE_PERM_BUF_SIZE);
   }
 
-fastout:  /* target if the file information is read from database into st */
   st->phash = h;
   st->pathlen = len;
   memcpy(st->path, (len ? path : ""), len + 1);
@@ -543,14 +527,14 @@ fastout:  /* target if the file information is read from database into st */
   switch (ctx->current) {
     case LOCAL_REPLICA:
       if (c_rbtree_insert(ctx->local.tree, (void *) st) < 0) {
-        SAFE_FREE(st);
+        csync_file_stat_free(st);
         ctx->status_code = CSYNC_STATUS_TREE_ERROR;
         return -1;
       }
       break;
     case REMOTE_REPLICA:
       if (c_rbtree_insert(ctx->remote.tree, (void *) st) < 0) {
-        SAFE_FREE(st);
+        csync_file_stat_free(st);
         ctx->status_code = CSYNC_STATUS_TREE_ERROR;
         return -1;
       }
@@ -580,7 +564,11 @@ int csync_walker(CSYNC *ctx, const char *file, const csync_vio_file_stat_t *fs,
   switch (flag) {
     case CSYNC_FTW_FLAG_FILE:
       if (ctx->current == REMOTE_REPLICA) {
-        CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "file: %s [file_id=%s size=%" PRIu64 "]", file, fs->file_id, fs->size);
+          if (fs->fields & CSYNC_VIO_FILE_STAT_FIELDS_SIZE) {
+              CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "file: %s [file_id=%s size=%" PRIu64 "]", file, fs->file_id, fs->size);
+          } else {
+              CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "file: %s [file_id=%s size=UNKNOWN]", file, fs->file_id);
+          }
       } else {
           CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "file: %s [inode=%" PRIu64 " size=%" PRIu64 "]", file, fs->inode, fs->size);
       }
@@ -891,10 +879,11 @@ int csync_ftw(CSYNC *ctx, const char *uri, csync_walker_fn fn,
 
       if (ctx->current_fs && !ctx->current_fs->child_modified
           && ctx->current_fs->instruction == CSYNC_INSTRUCTION_EVAL) {
-        ctx->current_fs->instruction = CSYNC_INSTRUCTION_NONE;
-        if (ctx->current == REMOTE_REPLICA) {
-          ctx->current_fs->should_update_metadata = true;
-        }
+          if (ctx->current == REMOTE_REPLICA) {
+              ctx->current_fs->instruction = CSYNC_INSTRUCTION_UPDATE_METADATA;
+          } else {
+              ctx->current_fs->instruction = CSYNC_INSTRUCTION_NONE;
+          }
       }
 
       if (ctx->current_fs && previous_fs && ctx->current_fs->has_ignored_files) {
@@ -906,12 +895,6 @@ int csync_ftw(CSYNC *ctx, const char *uri, csync_walker_fn fn,
     if (ctx->current_fs && previous_fs && ctx->current_fs->child_modified) {
         /* If a directory has modified files, put the flag on the parent directory as well */
         previous_fs->child_modified = ctx->current_fs->child_modified;
-    }
-
-    if (flag == CSYNC_FTW_FLAG_DIR && ctx->current_fs
-        && (ctx->current_fs->instruction == CSYNC_INSTRUCTION_EVAL ||
-            ctx->current_fs->instruction == CSYNC_INSTRUCTION_NEW)) {
-        ctx->current_fs->should_update_metadata = true;
     }
 
     ctx->current_fs = previous_fs;

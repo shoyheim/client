@@ -139,7 +139,6 @@ csync_vio_file_stat_t *csync_vio_local_readdir(csync_vio_handle_t *dhandle) {
 
   dhandle_t *handle = NULL;
   csync_vio_file_stat_t *file_stat = NULL;
-  ULARGE_INTEGER FileIndex;
   DWORD rem;
 
   handle = (dhandle_t *) dhandle;
@@ -168,11 +167,20 @@ csync_vio_file_stat_t *csync_vio_local_readdir(csync_vio_handle_t *dhandle) {
   }
   file_stat->name = c_utf8_from_locale(handle->ffd.cFileName);
 
-  file_stat->fields |= CSYNC_VIO_FILE_STAT_FIELDS_TYPE;
-  if (handle->ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT
-            && handle->ffd.dwReserved0 & IO_REPARSE_TAG_SYMLINK) {
-        file_stat->flags = CSYNC_VIO_FILE_FLAGS_SYMLINK;
-        file_stat->type = CSYNC_VIO_FILE_TYPE_SYMBOLIC_LINK;
+    file_stat->flags = CSYNC_VIO_FILE_FLAGS_NONE;
+    file_stat->fields |= CSYNC_VIO_FILE_STAT_FIELDS_TYPE;
+    if (handle->ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+        // Detect symlinks, and treat junctions as symlinks too.
+        if (handle->ffd.dwReserved0 == IO_REPARSE_TAG_SYMLINK
+                || handle->ffd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT) {
+            file_stat->flags |= CSYNC_VIO_FILE_FLAGS_SYMLINK;
+            file_stat->type = CSYNC_VIO_FILE_TYPE_SYMBOLIC_LINK;
+        } else {
+            // The SIS and DEDUP reparse points should be treated as
+            // regular files. We don't know about the other ones yet,
+            // but will also treat them normally for now.
+            file_stat->type = CSYNC_VIO_FILE_TYPE_REGULAR;
+        }
     } else if (handle->ffd.dwFileAttributes & FILE_ATTRIBUTE_DEVICE
                 || handle->ffd.dwFileAttributes & FILE_ATTRIBUTE_OFFLINE
                 || handle->ffd.dwFileAttributes & FILE_ATTRIBUTE_TEMPORARY) {
@@ -183,7 +191,6 @@ csync_vio_file_stat_t *csync_vio_local_readdir(csync_vio_handle_t *dhandle) {
         file_stat->type = CSYNC_VIO_FILE_TYPE_REGULAR;
     }
 
-    file_stat->flags = CSYNC_VIO_FILE_FLAGS_NONE;
     /* Check for the hidden flag */
     if( handle->ffd.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN ) {
         file_stat->flags |= CSYNC_VIO_FILE_FLAGS_HIDDEN;
@@ -226,8 +233,10 @@ int csync_vio_local_stat(const char *uri, csync_vio_file_stat_t *buf) {
     ULARGE_INTEGER FileIndex;
     mbchar_t *wuri = c_utf8_path_to_locale( uri );
 
-    h = CreateFileW( wuri, 0, FILE_SHARE_READ, NULL, OPEN_EXISTING,
-                     FILE_ATTRIBUTE_NORMAL+FILE_FLAG_BACKUP_SEMANTICS+FILE_FLAG_OPEN_REPARSE_POINT, NULL );
+    h = CreateFileW( wuri, 0, FILE_SHARE_WRITE | FILE_SHARE_READ | FILE_SHARE_DELETE,
+                     NULL, OPEN_EXISTING,
+                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                     NULL );
     if( h == INVALID_HANDLE_VALUE ) {
         CSYNC_LOG(CSYNC_LOG_PRIORITY_CRIT, "CreateFileW failed on %s", uri );
         errno = GetLastError();

@@ -216,6 +216,12 @@ QString Theme::overrideServerUrl() const
     return QString::null;
 }
 
+QString Theme::forceConfigAuthType() const
+{
+    return QString();
+}
+
+
 QString Theme::defaultClientFolder() const
 {
     return appName();
@@ -246,11 +252,6 @@ bool Theme::systrayUseMonoIcons() const
 QString Theme::updateCheckUrl() const
 {
     return QLatin1String("https://updates.owncloud.com/client/");
-}
-
-QString Theme::transmissionChecksum() const
-{
-    return QString::null; // No transmission by default.
 }
 
 qint64 Theme::newBigFolderSizeLimit() const
@@ -285,7 +286,7 @@ QString Theme::about() const
             .arg(MIRALL_VERSION_STRING).arg("http://" MIRALL_STRINGIFY(APPLICATION_DOMAIN))
             .arg(MIRALL_STRINGIFY(APPLICATION_DOMAIN));
 
-    re += tr("<p>Copyright ownCloud, Incorporated</p>");
+    re += tr("<p>Copyright ownCloud GmbH</p>");
     re += tr("<p>Distributed by %1 and licensed under the GNU General Public License (GPL) Version 2.0.<br/>"
              "%2 and the %2 logo are registered trademarks of %1 in the "
              "United States, other countries, or both.</p>")
@@ -417,5 +418,49 @@ QString Theme::webDavPathNonShib() const
     return QLatin1String("remote.php/nonshib-webdav/");
 }
 
-} // end namespace client
+bool Theme::linkSharing() const
+{
+    return true;
+}
 
+bool Theme::userGroupSharing() const
+{
+    return true;
+}
+
+bool Theme::forceSystemNetworkProxy() const
+{
+    return false;
+}
+
+Theme::UserIDType Theme::userIDType() const
+{
+    return UserIDType::UserIDUserName;
+}
+
+QString Theme::customUserID() const
+{
+    return QString();
+}
+
+QString Theme::userIDHint() const
+{
+    return QString();
+}
+
+
+QString Theme::wizardUrlPostfix() const
+{
+    return QString();
+}
+
+QString Theme::wizardUrlHint() const
+{
+    return QString();
+}
+
+QString Theme::quotaBaseFolder() const
+{
+    return QLatin1String("/");
+}
+} // end namespace client

@@ -35,6 +35,7 @@
 #include "creds/abstractcredentials.h"
 
 #include <QDesktopServices>
+#include <QDir>
 #include <QMessageBox>
 #include <QSignalMapper>
 
@@ -91,9 +92,9 @@ ownCloudGui::ownCloudGui(Application *parent) :
              this,SLOT(slotSyncStateChange(Folder*)));
 
     connect( AccountManager::instance(), SIGNAL(accountAdded(AccountState*)),
-             SLOT(setupContextMenu()));
+             SLOT(setupContextMenuIfVisible()));
     connect( AccountManager::instance(), SIGNAL(accountRemoved(AccountState*)),
-             SLOT(setupContextMenu()));
+             SLOT(setupContextMenuIfVisible()));
 
     connect( Logger::instance(), SIGNAL(guiLog(QString,QString)),
              SLOT(slotShowTrayMessage(QString,QString)));
@@ -192,6 +193,7 @@ void ownCloudGui::slotTrayClicked( QSystemTrayIcon::ActivationReason reason )
 void ownCloudGui::slotSyncStateChange( Folder* folder )
 {
     slotComputeOverallSyncStatus();
+    setupContextMenuIfVisible();
 
     if( !folder ) {
         return; // Valid, just a general GUI redraw was needed.
@@ -213,7 +215,7 @@ void ownCloudGui::slotSyncStateChange( Folder* folder )
 void ownCloudGui::slotFoldersChanged()
 {
     slotComputeOverallSyncStatus();
-    setupContextMenu();
+    setupContextMenuIfVisible();
 }
 
 void ownCloudGui::slotOpenPath(const QString &path)
@@ -223,13 +225,26 @@ void ownCloudGui::slotOpenPath(const QString &path)
 
 void ownCloudGui::slotAccountStateChanged()
 {
-    setupContextMenu();
+    setupContextMenuIfVisible();
     slotComputeOverallSyncStatus();
+}
+
+void ownCloudGui::slotTrayMessageIfServerUnsupported(Account* account)
+{
+    if (account->serverVersionUnsupported()) {
+        slotShowTrayMessage(
+                tr("Unsupported Server Version"),
+                tr("The server on account %1 runs an old and unsupported version %2. "
+                   "Using this client with unsupported server versions is untested and "
+                   "potentially dangerous. Proceed at your own risk.")
+                    .arg(account->displayName(), account->serverVersion()));
+    }
 }
 
 void ownCloudGui::slotComputeOverallSyncStatus()
 {
     bool allSignedOut = true;
+    bool allPaused = true;
     QVector<AccountStatePtr> problemAccounts;
     foreach (auto a, AccountManager::instance()->accounts()) {
         if (!a->isSignedOut()) {
@@ -237,6 +252,11 @@ void ownCloudGui::slotComputeOverallSyncStatus()
         }
         if (!a->isConnected()) {
             problemAccounts.append(a);
+        }
+    }
+    foreach (Folder* f, FolderMan::instance()->map()) {
+        if (!f->syncPaused()) {
+            allPaused = false;
         }
     }
 
@@ -271,6 +291,10 @@ void ownCloudGui::slotComputeOverallSyncStatus()
         _tray->setIcon(Theme::instance()->folderOfflineIcon(true));
         _tray->setToolTip(tr("Please sign in"));
         return;
+    } else if (allPaused) {
+        _tray->setIcon(Theme::instance()->syncStateIcon(SyncResult::Paused, true));
+        _tray->setToolTip(tr("Account synchronization is disabled"));
+        return;
     }
 
     // display the info of the least successful sync (eg. do not just display the result of the latest sync)
@@ -290,7 +314,7 @@ void ownCloudGui::slotComputeOverallSyncStatus()
             foreach(Folder* folder, map.values()) {
                 //qDebug() << "Folder in overallStatus Message: " << folder << " with name " << folder->alias();
                 QString folderMessage = folderMan->statusToString(folder->syncResult().status(), folder->syncPaused());
-                allStatusStrings += tr("Folder %1: %2").arg(folder->aliasGui(), folderMessage);
+                allStatusStrings += tr("Folder %1: %2").arg(folder->shortGuiLocalPath(), folderMessage);
             }
             trayMessage = allStatusStrings.join(QLatin1String("\n"));
 #endif
@@ -324,9 +348,17 @@ void ownCloudGui::addAccountContextMenu(AccountStatePtr accountState, QMenu *men
     FolderMan *folderMan = FolderMan::instance();
     bool firstFolder = true;
     bool singleSyncFolder = folderMan->map().size() == 1 && Theme::instance()->singleSyncFolder();
+    bool onePaused = false;
+    bool allPaused = true;
     foreach (Folder* folder, folderMan->map()) {
-        if (folder->accountState() != accountState) {
+        if (folder->accountState() != accountState.data()) {
             continue;
+        }
+
+        if (folder->syncPaused()) {
+            onePaused = true;
+        } else {
+            allPaused = false;
         }
 
         if (firstFolder && !singleSyncFolder) {
@@ -335,7 +367,7 @@ void ownCloudGui::addAccountContextMenu(AccountStatePtr accountState, QMenu *men
             menu->addAction(tr("Managed Folders:"))->setDisabled(true);
         }
 
-        QAction *action = new QAction( tr("Open folder '%1'").arg(folder->shortGuiPath()), this );
+        QAction *action = new QAction( tr("Open folder '%1'").arg(folder->shortGuiLocalPath()), menu );
         connect(action, SIGNAL(triggered()),_folderOpenActionMapper, SLOT(map()));
         _folderOpenActionMapper->setMapping( action, folder->alias() );
         menu->addAction(action);
@@ -343,6 +375,17 @@ void ownCloudGui::addAccountContextMenu(AccountStatePtr accountState, QMenu *men
 
      menu->addSeparator();
      if (separateMenu) {
+         if (onePaused) {
+             QAction* enable = menu->addAction(tr("Unpause all folders"));
+             enable->setProperty(propertyAccountC, QVariant::fromValue(accountState));
+             connect(enable, SIGNAL(triggered(bool)), SLOT(slotUnpauseAllFolders()));
+         }
+         if (!allPaused) {
+             QAction* enable = menu->addAction(tr("Pause all folders"));
+             enable->setProperty(propertyAccountC, QVariant::fromValue(accountState));
+             connect(enable, SIGNAL(triggered(bool)), SLOT(slotPauseAllFolders()));
+         }
+
          if (accountState->isSignedOut()) {
              QAction* signin = menu->addAction(tr("Log in..."));
              signin->setProperty(propertyAccountC, QVariant::fromValue(accountState));
@@ -356,22 +399,49 @@ void ownCloudGui::addAccountContextMenu(AccountStatePtr accountState, QMenu *men
 
 }
 
+static bool minimalTrayMenu()
+{
+    static QByteArray var = qgetenv("OWNCLOUD_MINIMAL_TRAY_MENU");
+    return !var.isEmpty();
+}
+
 void ownCloudGui::setupContextMenu()
 {
+    // The tray menu is surprisingly problematic. Being able to switch to
+    // a minimal version of it is a useful workaround and testing tool.
+    if (minimalTrayMenu()) {
+        if (!_contextMenu) {
+            _contextMenu.reset(new QMenu());
+            _recentActionsMenu = new QMenu(tr("Recent Changes"), _contextMenu.data());
+            _tray->setContextMenu(_contextMenu.data());
+            _contextMenu->addAction(_actionQuit);
+        }
+        return;
+    }
+
     auto accountList = AccountManager::instance()->accounts();
 
     bool isConfigured = (!accountList.isEmpty());
     bool atLeastOneConnected = false;
     bool atLeastOneSignedOut = false;
     bool atLeastOneSignedIn = false;
+    bool atLeastOnePaused = false;
+    bool atLeastOneNotPaused = false;
     foreach (auto a, accountList) {
         if (a->isConnected()) {
             atLeastOneConnected = true;
         }
-        if (a->isSignedOut()){
+        if (a->isSignedOut()) {
             atLeastOneSignedOut = true;
         } else {
             atLeastOneSignedIn = true;
+        }
+    }
+    foreach (auto f, FolderMan::instance()->map()) {
+        if (f->syncPaused()) {
+            atLeastOnePaused = true;
+        } else {
+            atLeastOneNotPaused = true;
         }
     }
 
@@ -380,9 +450,13 @@ void ownCloudGui::setupContextMenu()
             _tray->hide();
         }
         _contextMenu->clear();
-        slotRebuildRecentMenus();
     } else {
         _contextMenu.reset(new QMenu());
+
+        // Update the context menu whenever we're about to show it
+        // to the user.
+        connect(_contextMenu.data(), SIGNAL(aboutToShow()), SLOT(setupContextMenu()));
+
         _recentActionsMenu = new QMenu(tr("Recent Changes"), _contextMenu.data());
         // this must be called only once after creating the context menu, or
         // it will trigger a bug in Ubuntu's SNI bridge patch (11.10, 12.04).
@@ -407,6 +481,8 @@ void ownCloudGui::setupContextMenu()
 #endif
     }
     _contextMenu->setTitle(Theme::instance()->appNameGUI() );
+    slotRebuildRecentMenus();
+
     // We must call deleteLater because we might be called from the press in one of the actions.
     foreach (auto menu, _accountMenus) { menu->deleteLater(); }
     _accountMenus.clear();
@@ -439,6 +515,26 @@ void ownCloudGui::setupContextMenu()
     }
 
     _contextMenu->addSeparator();
+    if (atLeastOnePaused) {
+        QString text;
+        if (accountList.count() > 1) {
+            text = tr("Unpause all synchronization");
+        } else {
+            text = tr("Unpause synchronization");
+        }
+        QAction* action = _contextMenu->addAction(text);
+        connect(action, SIGNAL(triggered(bool)), SLOT(slotUnpauseAllFolders()));
+    }
+    if (atLeastOneNotPaused) {
+        QString text;
+        if (accountList.count() > 1) {
+            text = tr("Pause all synchronization");
+        } else {
+            text = tr("Pause synchronization");
+        }
+        QAction* action = _contextMenu->addAction(text);
+        connect(action, SIGNAL(triggered(bool)), SLOT(slotPauseAllFolders()));
+    }
     if (atLeastOneSignedIn) {
         if (accountList.count() > 1) {
             _actionLogout->setText(tr("Log out of all accounts"));
@@ -462,6 +558,11 @@ void ownCloudGui::setupContextMenu()
     }
 }
 
+void ownCloudGui::setupContextMenuIfVisible()
+{
+    if (_contextMenu && _contextMenu->isVisible())
+        setupContextMenu();
+}
 
 void ownCloudGui::slotShowTrayMessage(const QString &title, const QString &msg)
 {
@@ -568,17 +669,28 @@ void ownCloudGui::slotUpdateProgress(const QString &folder, const ProgressInfo& 
     } else if (progress.totalSize() == 0 ) {
         quint64 currentFile = progress.currentFile();
         quint64 totalFileCount = qMax(progress.totalFiles(), currentFile);
-        _actionStatus->setText( tr("Syncing %1 of %2  (%3 left)")
-            .arg( currentFile ).arg( totalFileCount )
-            .arg( Utility::durationToDescriptiveString(progress.totalProgress().estimatedEta) ) );
+        QString msg;
+        if (progress.trustEta()) {
+            msg = tr("Syncing %1 of %2  (%3 left)")
+                    .arg( currentFile ).arg( totalFileCount )
+                    .arg( Utility::durationToDescriptiveString2(progress.totalProgress().estimatedEta) );
+        } else {
+            msg = tr("Syncing %1 of %2")
+                    .arg( currentFile ).arg( totalFileCount );
+        }
+        _actionStatus->setText( msg );
     } else {
         QString totalSizeStr = Utility::octetsToString( progress.totalSize() );
-        _actionStatus->setText( tr("Syncing %1 (%2 left)")
-            .arg( totalSizeStr, Utility::durationToDescriptiveString(progress.totalProgress().estimatedEta) ) );
+        QString msg;
+        if (progress.trustEta()) {
+            msg = tr("Syncing %1 (%2 left)")
+                .arg( totalSizeStr, Utility::durationToDescriptiveString2(progress.totalProgress().estimatedEta) );
+        } else {
+            msg = tr("Syncing %1")
+                .arg( totalSizeStr );
+        }
+        _actionStatus->setText( msg );
     }
-
-
-
 
     _actionRecent->setIcon( QIcon() ); // Fixme: Set a "in-progress"-item eventually.
 
@@ -610,10 +722,14 @@ void ownCloudGui::slotUpdateProgress(const QString &folder, const ProgressInfo& 
         }
         _recentItemsActions.append(action);
 
-        slotRebuildRecentMenus();
+        // Update the "Recent" menu if the context menu is being shown,
+        // otherwise it'll be updated later, when the context menu is opened.
+        if (_contextMenu && _contextMenu->isVisible()) {
+            slotRebuildRecentMenus();
+        }
     }
 
-    if (progress.hasStarted()
+    if (progress.isUpdatingEstimates()
             && progress.completedFiles() >= progress.totalFiles()
             && progress._currentDiscoveredFolder.isEmpty()) {
         QTimer::singleShot(2000, this, SLOT(slotDisplayIdle()));
@@ -627,10 +743,10 @@ void ownCloudGui::slotDisplayIdle()
 
 void ownCloudGui::slotLogin()
 {
-    auto list = AccountManager::instance()->accounts();
     if (auto account = qvariant_cast<AccountStatePtr>(sender()->property(propertyAccountC))) {
         account->signIn();
     } else {
+        auto list = AccountManager::instance()->accounts();
         foreach (const auto &a, list) {
             a->signIn();
         }
@@ -647,6 +763,33 @@ void ownCloudGui::slotLogout()
 
     foreach (const auto &ai, list) {
         ai->signOutByUi();
+    }
+}
+
+void ownCloudGui::slotUnpauseAllFolders()
+{
+    setPauseOnAllFoldersHelper(false);
+}
+
+void ownCloudGui::slotPauseAllFolders()
+{
+    setPauseOnAllFoldersHelper(true);
+}
+
+void ownCloudGui::setPauseOnAllFoldersHelper(bool pause)
+{
+    QList<AccountState*> accounts;
+    if (auto account = qvariant_cast<AccountStatePtr>(sender()->property(propertyAccountC))) {
+        accounts.append(account.data());
+    } else {
+        foreach (auto a, AccountManager::instance()->accounts()) {
+            accounts.append(a.data());
+        }
+    }
+    foreach (Folder* f, FolderMan::instance()->map()) {
+        if (accounts.contains(f->accountState())) {
+            f->setSyncPaused(pause);
+        }
     }
 }
 
@@ -771,14 +914,27 @@ void ownCloudGui::slotShowShareDialog(const QString &sharePath, const QString &l
 
     const auto accountState = folder->accountState();
 
+    // As a first approximation, set the set of permissions that can be granted
+    // either to everything (resharing allowed) or nothing (no resharing).
+    //
+    // The correct value will be found with a propfind from ShareDialog.
+    // (we want to show the dialog directly, not wait for the propfind first)
+    SharePermissions maxSharingPermissions =
+            SharePermissionRead
+            | SharePermissionUpdate | SharePermissionCreate | SharePermissionDelete
+            | SharePermissionShare;
+    if (!resharingAllowed) {
+        maxSharingPermissions = 0;
+    }
+
+
     ShareDialog *w = 0;
     if (_shareDialogs.contains(localPath) && _shareDialogs[localPath]) {
         qDebug() << Q_FUNC_INFO << "Raising share dialog" << sharePath << localPath;
         w = _shareDialogs[localPath];
     } else {
-        qDebug() << Q_FUNC_INFO << "Opening share dialog" << sharePath << localPath;
-        w = new ShareDialog(accountState->account(), sharePath, localPath, resharingAllowed);
-        w->getShares();
+        qDebug() << Q_FUNC_INFO << "Opening share dialog" << sharePath << localPath << maxSharingPermissions;
+        w = new ShareDialog(accountState, sharePath, localPath, maxSharingPermissions);
         w->setAttribute( Qt::WA_DeleteOnClose, true );
 
         _shareDialogs[localPath] = w;

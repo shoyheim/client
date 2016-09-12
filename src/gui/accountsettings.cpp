@@ -29,11 +29,13 @@
 #include "accountmanager.h"
 #include "owncloudsetupwizard.h"
 #include "creds/abstractcredentials.h"
+#include "tooltipupdater.h"
 
 #include <math.h>
 
 #include <QDebug>
 #include <QDesktopServices>
+#include <QDir>
 #include <QListWidgetItem>
 #include <QMessageBox>
 #include <QAction>
@@ -87,6 +89,8 @@ AccountSettings::AccountSettings(AccountState *accountState, QWidget *parent) :
 #else
     ui->_folderList->setMinimumWidth( 300 );
 #endif
+    new ToolTipUpdater(ui->_folderList);
+
     createAccountToolbox();
     connect(AccountManager::instance(), SIGNAL(accountAdded(AccountState*)),
             SLOT(slotAccountAdded(AccountState*)));
@@ -155,7 +159,13 @@ void AccountSettings::createAccountToolbox()
 
 void AccountSettings::slotOpenAccountWizard()
 {
-    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+    if (
+#if QT_VERSION > QT_VERSION_CHECK(5, 0, 0)
+            qgetenv("QT_QPA_PLATFORMTHEME") == "appmenu-qt5" ||
+                // We can't call isSystemTrayAvailable with appmenu-qt5 because it breaks the systemtray
+                // (issue #4693, #4944)
+#endif
+            QSystemTrayIcon::isSystemTrayAvailable()) {
         topLevelWidget()->close();
     }
 #ifdef Q_OS_MAC
@@ -193,8 +203,7 @@ void AccountSettings::slotCustomContextMenuRequested(const QPoint &pos)
         return;
     }
 
-    QString alias = _model->data( index, FolderStatusDelegate::FolderAliasRole ).toString();
-    if (alias.isEmpty()) {
+    if (_model->classify(index) != FolderStatusModel::RootFolder) {
         return;
     }
 
@@ -208,9 +217,11 @@ void AccountSettings::slotCustomContextMenuRequested(const QPoint &pos)
     QAction *ac = menu->addAction(tr("Open folder"));
     connect(ac, SIGNAL(triggered(bool)), this, SLOT(slotOpenCurrentFolder()));
 
-    ac = menu->addAction(tr("Choose what to sync"));
-    ac->setEnabled(folderConnected);
-    connect(ac, SIGNAL(triggered(bool)), this, SLOT(doExpand()));
+    if (!ui->_folderList->isExpanded(index)) {
+        ac = menu->addAction(tr("Choose what to sync"));
+        ac->setEnabled(folderConnected);
+        connect(ac, SIGNAL(triggered(bool)), this, SLOT(doExpand()));
+    }
 
     ac = menu->addAction(folderPaused ? tr("Resume sync") : tr("Pause sync"));
     connect(ac, SIGNAL(triggered(bool)), this, SLOT(slotEnableCurrentFolder()));
@@ -271,7 +282,6 @@ void AccountSettings::slotFolderWizardAccepted()
     qDebug() << "* Folder wizard completed";
 
     FolderDefinition definition;
-    definition.alias        = folderWizard->field(QLatin1String("alias")).toString();
     definition.localPath    = FolderDefinition::prepareLocalPath(
             folderWizard->field(QLatin1String("sourceFolder")).toString());
     definition.targetPath   = folderWizard->property("targetPath").toString();
@@ -328,10 +338,13 @@ void AccountSettings::slotRemoveCurrentFolder()
         QString alias = _model->data( selected, FolderStatusDelegate::FolderAliasRole ).toString();
         qDebug() << "Remove Folder alias " << alias;
         if( !alias.isEmpty() ) {
+            FolderMan *folderMan = FolderMan::instance();
+            QString shortGuiLocalPath = folderMan->folder(alias)->shortGuiLocalPath();
+
             QMessageBox messageBox(QMessageBox::Question,
                                    tr("Confirm Folder Sync Connection Removal"),
                                    tr("<p>Do you really want to stop syncing the folder <i>%1</i>?</p>"
-                                      "<p><b>Note:</b> This will <b>not</b> delete any files.</p>").arg(alias),
+                                      "<p><b>Note:</b> This will <b>not</b> delete any files.</p>").arg(shortGuiLocalPath),
                                    QMessageBox::NoButton,
                                    this);
             QPushButton* yesButton =
@@ -343,7 +356,6 @@ void AccountSettings::slotRemoveCurrentFolder()
                 return;
             }
 
-            FolderMan *folderMan = FolderMan::instance();
             folderMan->slotRemoveFolder( folderMan->folder(alias) );
             _model->removeRow(row);
 
@@ -435,8 +447,7 @@ void AccountSettings::slotEnableCurrentFolder()
         if ( f->isBusy() && terminate ) {
             f->slotTerminateSync();
         }
-        f->setSyncPaused(!currentlyPaused); // toggle the pause setting
-        folderMan->slotSetFolderPaused( f, !currentlyPaused );
+        f->setSyncPaused(!currentlyPaused);
 
         // keep state for the icon setting.
         if( currentlyPaused ) _wasDisabledBefore = true;
@@ -511,7 +522,11 @@ void AccountSettings::slotAccountStateChanged(int state)
         }
 
         if (state == AccountState::Connected) {
-            showConnectionLabel( tr("Connected to %1.").arg(serverWithUser) );
+            QStringList errors;
+            if (account->serverVersionUnsupported()) {
+                errors << tr("The server version %1 is old and unsupported! Proceed at your own risk.").arg(account->serverVersion());
+            }
+            showConnectionLabel( tr("Connected to %1.").arg(serverWithUser), errors );
         } else if (state == AccountState::ServiceUnavailable) {
             showConnectionLabel( tr("Server %1 is temporarily unavailable.").arg(server) );
         } else if (state == AccountState::SignedOut) {
@@ -539,11 +554,10 @@ void AccountSettings::slotAccountStateChanged(int state)
     }
     /* set the correct label for the Account toolbox button */
     if( _accountState ) {
-        bool isConnected = _accountState->isConnected();
-        if( isConnected ) {
-            _toggleSignInOutAction->setText(tr("Log out"));
-        } else {
+        if( _accountState->isSignedOut() ) {
             _toggleSignInOutAction->setText(tr("Log in"));
+        } else {
+            _toggleSignInOutAction->setText(tr("Log out"));
         }
     }
 }
@@ -598,7 +612,8 @@ void AccountSettings::refreshSelectiveSyncStatus()
             continue;
         }
 
-        auto undecidedList =  folder->journalDb()->getSelectiveSyncList(SyncJournalDb::SelectiveSyncUndecidedList);
+        bool ok;
+        auto undecidedList =  folder->journalDb()->getSelectiveSyncList(SyncJournalDb::SelectiveSyncUndecidedList, &ok);
         QString p;
         foreach(const auto &it, undecidedList) {
             // FIXME: add the folder alias in a hoover hint.

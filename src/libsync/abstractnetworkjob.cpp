@@ -43,7 +43,7 @@ namespace OCC {
 AbstractNetworkJob::AbstractNetworkJob(AccountPtr account, const QString &path, QObject *parent)
     : QObject(parent)
     , _timedout(false)
-    , _followRedirects(false)
+    , _followRedirects(true)
     , _account(account)
     , _ignoreCredentialFailure(false)
     , _reply(0)
@@ -148,6 +148,11 @@ QNetworkReply *AbstractNetworkJob::headRequest(const QUrl &url)
     return addTimer(_account->headRequest(url));
 }
 
+QNetworkReply *AbstractNetworkJob::deleteRequest(const QUrl &url)
+{
+    return addTimer(_account->deleteRequest(url));
+}
+
 void AbstractNetworkJob::slotFinished()
 {
     _timer.stop();
@@ -237,6 +242,7 @@ void AbstractNetworkJob::slotTimeout()
         reply()->abort();
     } else {
         qDebug() << Q_FUNC_INFO << this << "Timeout reply was NULL";
+        deleteLater();
     }
 }
 
@@ -265,7 +271,7 @@ QString extractErrorMessage(const QByteArray& errorResponse)
     }
 
     QString exception;
-    while (!reader.atEnd() && reader.error() == QXmlStreamReader::NoError) {
+    while (!reader.atEnd() && !reader.hasError()) {
         reader.readNextStartElement();
         if (reader.name() == QLatin1String("message")) {
             QString message = reader.readElementText();

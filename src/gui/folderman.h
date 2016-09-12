@@ -19,7 +19,6 @@
 #include <QObject>
 #include <QQueue>
 #include <QList>
-#include <QPointer>
 
 #include "folder.h"
 #include "folderwatcher.h"
@@ -33,6 +32,7 @@ namespace OCC {
 class Application;
 class SyncResult;
 class SocketApi;
+class LockWatcher;
 
 /**
  * @brief The FolderMan class
@@ -143,7 +143,8 @@ signals:
 
 public slots:
     void slotRemoveFolder( Folder* );
-    void slotSetFolderPaused(Folder *, bool paused);
+    void slotFolderSyncPaused(Folder *, bool paused);
+    void slotFolderCanSyncChanged();
 
     void slotFolderSyncStarted();
     void slotFolderSyncFinished( const SyncResult& );
@@ -185,6 +186,13 @@ public slots:
      */
     void slotScheduleAppRestart();
 
+    /**
+     * Triggers a sync run once the lock on the given file is removed.
+     *
+     * Automatically detemines the folder that's responsible for the file.
+     */
+    void slotSyncOnceFileUnlocks(const QString& path);
+
 private slots:
     // slot to take the next folder from queue and start syncing.
     void slotStartScheduledFolderSync();
@@ -196,11 +204,19 @@ private slots:
     // FolderMan::folderSyncStateChange(Folder*) signal.
     void slotForwardFolderSyncStateChange();
 
+    void slotServerVersionChanged(Account* account);
+
+    /**
+     * Schedules the folder for synchronization that contains
+     * the file with the given path.
+     */
+    void slotScheduleFolderOwningFile(const QString& path);
+
 private:
     /** Adds a new folder, does not add it to the account settings and
      *  does not set an account on the new folder.
       */
-    Folder* addFolderInternal(const FolderDefinition& folderDefinition);
+    Folder* addFolderInternal(FolderDefinition folderDefinition, AccountState* accountState);
 
     /* unloads a folder object, does not delete it */
     void unloadFolder( Folder * );
@@ -226,7 +242,8 @@ private:
     QPointer<RequestEtagJob>        _currentEtagJob; // alias of Folder running the current RequestEtagJob
 
     QMap<QString, FolderWatcher*> _folderWatchers;
-    QPointer<SocketApi> _socketApi;
+    QScopedPointer<LockWatcher> _lockWatcher;
+    QScopedPointer<SocketApi> _socketApi;
 
     /** The aliases of folders that shall be synced. */
     QQueue<Folder*> _scheduleQueue;

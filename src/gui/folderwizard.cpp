@@ -68,17 +68,6 @@ FolderWizardLocalPath::FolderWizardLocalPath()
     _ui.localFolderLineEdit->setText( QDir::toNativeSeparators( defaultPath ) );
     _ui.localFolderLineEdit->setToolTip(tr("Enter the path to the local folder."));
 
-    registerField(QLatin1String("alias*"), _ui.aliasLineEdit);
-
-    QString newAlias = Theme::instance()->appName();
-    int count = 0;
-    while (FolderMan::instance()->folder(newAlias)) {
-        // There is already a folder configured with this name and folder names need to be unique
-        newAlias = Theme::instance()->appName() + QString::number(++count);
-    }
-    _ui.aliasLineEdit->setText( newAlias );
-
-    _ui.aliasLineEdit->setToolTip(tr("The folder alias is a descriptive name for this sync connection."));
     _ui.warnLabel->setTextFormat(Qt::RichText);
     _ui.warnLabel->hide();
 }
@@ -108,29 +97,6 @@ bool FolderWizardLocalPath::isComplete() const
     if (!isOk) {
         warnStrings << errorStr;
     }
-
-  // check if the alias is unique.
-  QString alias = _ui.aliasLineEdit->text();
-  if( alias.isEmpty() ) {
-    warnStrings.append( tr("The alias can not be empty. Please provide a descriptive alias word.") );
-    isOk = false;
-  }
-
-  auto map = FolderMan::instance()->map();
-  Folder::Map::const_iterator i = map.constBegin();
-  bool goon = true;
-  while( goon && i != map.constEnd() ) {
-    Folder *f = i.value();
-    if( f ) {
-      qDebug() << "Checking local alias: " << f->alias();
-      if( f->alias() == alias ) {
-        warnStrings.append( tr("The alias <i>%1</i> is already in use. Please pick another alias.").arg(alias) );
-        isOk = false;
-        goon = false;
-      }
-    }
-    i++;
-  }
 
   _ui.warnLabel->setWordWrap(true);
   if( isOk ) {
@@ -162,17 +128,6 @@ void FolderWizardLocalPath::slotChooseLocalFolder()
     if (!dir.isEmpty()) {
         // set the last directory component name as alias
         _ui.localFolderLineEdit->setText(QDir::toNativeSeparators(dir));
-
-        QDir pickedDir(dir);
-        QString newAlias = pickedDir.dirName();
-        int count = 0;
-        while (FolderMan::instance()->folder(newAlias)) {
-            // There is already a folder configured with this name and folder names need to be unique
-            newAlias = pickedDir.dirName() + QString::number(++count);
-        }
-        if( !newAlias.isEmpty() ) {
-            _ui.aliasLineEdit->setText(newAlias);
-        }
     }
     emit completeChanged();
 }
@@ -336,6 +291,7 @@ bool FolderWizardRemotePath::selectByPath(QString path)
     }
 
     _ui.folderTreeWidget->setCurrentItem(it);
+    _ui.folderTreeWidget->scrollToItem(it);
     return true;
 }
 
@@ -351,7 +307,9 @@ void FolderWizardRemotePath::slotUpdateDirectories(const QStringList &list)
         root->setToolTip(0, tr("Choose this to sync the entire account"));
         root->setData(0, Qt::UserRole, "/");
     }
-    foreach (QString path, list) {
+    QStringList sortedList = list;
+    Utility::sortFilenames(sortedList);
+    foreach (QString path, sortedList) {
         path.remove(webdavFolder);
         QStringList paths = path.split('/');
         if (paths.last().isEmpty()) paths.removeLast();
@@ -404,8 +362,11 @@ void FolderWizardRemotePath::slotLsColFolderEntry()
         path = path.mid(1);
 
     LsColJob *job = runLsColJob(path);
-    // no error handling, no updating, we do this manually
+    // No error handling, no updating, we do this manually
+    // because of extra logic in the typed-path case.
     disconnect(job, 0, this, 0);
+    connect(job, SIGNAL(finishedWithError(QNetworkReply*)),
+            SLOT(slotTypedPathError(QNetworkReply*)));
     connect(job, SIGNAL(directoryListingSubfolders(QStringList)),
             SLOT(slotTypedPathFound(QStringList)));
 }
@@ -414,6 +375,21 @@ void FolderWizardRemotePath::slotTypedPathFound(const QStringList& subpaths)
 {
     slotUpdateDirectories(subpaths);
     selectByPath(_ui.folderEntry->text());
+}
+
+void FolderWizardRemotePath::slotTypedPathError(QNetworkReply* reply)
+{
+    // Ignore 404s, otherwise users will get annoyed by error popups
+    // when not typing fast enough. It's still clear that a given path
+    // was not found, because the 'Next' button is disabled and no entry
+    // is selected in the tree view.
+    int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (httpCode == 404) {
+        showWarn(""); // hides the warning pane
+        return;
+    }
+
+    slotHandleLsColNetworkError(reply);
 }
 
 LsColJob* FolderWizardRemotePath::runLsColJob(const QString& path)
@@ -512,11 +488,13 @@ FolderWizardSelectiveSync::~FolderWizardSelectiveSync()
 
 void FolderWizardSelectiveSync::initializePage()
 {
-    QString alias        = wizard()->field(QLatin1String("alias")).toString();
     QString targetPath   = wizard()->property("targetPath").toString();
     if (targetPath.startsWith('/')) {
         targetPath = targetPath.mid(1);
     }
+    QString alias        = QFileInfo(targetPath).fileName();
+    if (alias.isEmpty())
+        alias = Theme::instance()->appName();
     _treeView->setFolderInfo(targetPath, alias);
     QWizardPage::initializePage();
 }
@@ -529,8 +507,10 @@ bool FolderWizardSelectiveSync::validatePage()
 
 void FolderWizardSelectiveSync::cleanupPage()
 {
-    QString alias        = wizard()->field(QLatin1String("alias")).toString();
     QString targetPath   = wizard()->property("targetPath").toString();
+    QString alias        = QFileInfo(targetPath).fileName();
+    if (alias.isEmpty())
+        alias = Theme::instance()->appName();
     _treeView->setFolderInfo(targetPath, alias);
     QWizardPage::cleanupPage();
 }

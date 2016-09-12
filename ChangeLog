@@ -1,5 +1,62 @@
 ChangeLog
 =========
+
+version 2.2.3 (release 2016-08-08)
+* SyncEngine: Fix detection of backup (#5104)
+* Fix bug with overriding URL in config (#5016)
+* Sharing: Fix bug with file names containing percent encodes (#5042, #5043)
+* Sharing: Permissions for federated shares on servers >=9.1 (#4996, #5001)
+* Overlays: Fix issues with file name casing on OS X and Windows
+* Windows: Skip symlinks and junctions again (#5019)
+* Only accept notification API Capability if endpoint is OCS-enabled (#5034)
+* Fix windows HiDPI (#4994)
+* SocketAPI: Use different pipe name to avoid unusual delay (#4977)
+* Tray: Add minimal mode as workaround and testing tool for Linux issues (#4985, #4990)
+* owncloudcmd: Fix --exclude regression #4979
+* Small memleak: Use the full file stat destructors (#4992)
+* Fix small QAction memleak (#5008)
+* Fix crash on shutting down during propagation (#4979)
+* Decrease memory usage during sync #4979
+* Setup csync logging earlier to get all log output (#4991)
+* Enable Shibboleth debug view with OWNCLOUD_SHIBBOLETH_DEBUG env
+
+version 2.2.2 (release 2016-06-21)
+* Excludes: Don't redundantly add the same exclude files (memleak) (#4967, #4988)
+* Excludes: Only log if the pattern was really logged. (#4989)
+
+version 2.2.1 (release 2016-06-06)
+ * Fix out of memory error when too many uploads happen (#4611)
+ * Fix display errors in progress display (#4803 #4856)
+ * LockWatcher: Remember to upload files after they become unlocked (#4865) 
+ * Fix overlay icons for files with umlauts (#4884)
+ * Certs: Re-ask for different cert after rejection (#4898, #4911)
+ * Progress: Don't count items without propagation jobs (#4856, #4910)
+ * Utility: Fix for the translation of minutes, second (#4855)
+ * SyncEngine: invalid the blacklist entry when the rename destination change
+
+version 2.2.0 (release 2016-05-12)
+ * Overlay icons: Refactoring - mainly for performance improvements
+ * Improved error handling with Sync Journal on USB storages (#4632)
+ * Sharing Completion: Improved UI of completion in sharing from desktop. (#3737)
+ * Show server notifications on the client (#3733)
+ * Improved Speed with small files by dynamic parallel request count (#4529)
+ * LockWatcher: Make sure to sync files after apps released exclusive locks on Windows.
+ * Improved handling of Win32 file locks and network files
+ * Workaround Ubuntu 16.04 tray icon bug (#4693)
+ * Removed the Alias field from the folder definition (#4695)
+ * Improved netrc parser (#4691)
+ * Improved user notifications about ignored files and conflicts (#4761, #3222)
+ * Add warnings for old server versions (#4523)
+ * Enable tranportation checksums if the server supports based on server capabilities (#3735)
+
+ * Default Chunk-size changed to 10MB (#4354)
+ * Documentation Improvements, ie. about overlay icons
+ * Translation fixes
+ * Countless other bugfixes
+ * Sqlite Update to recent version
+ * Update of QtKeyChain to support Windows credential store
+ * Packaging of dolphin overlay icon module for bleeding edge distros
+
 version 2.1.1 (release 2016-02-10)
  * UI improvements for HiDPI screens, error messages, RTL languages
  * Fix occurences of "Connection Closed" when a new unauthenticated TCP socket is used

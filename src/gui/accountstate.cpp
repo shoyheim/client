@@ -46,6 +46,16 @@ AccountState::~AccountState()
 {
 }
 
+AccountState *AccountState::loadFromSettings(AccountPtr account, QSettings& /*settings*/)
+{
+    auto accountState = new AccountState(account);
+    return accountState;
+}
+
+void AccountState::writeToSettings(QSettings& /*settings*/)
+{
+}
+
 AccountPtr AccountState::account() const
 {
     return _account;
@@ -84,6 +94,9 @@ void AccountState::setState(State state)
             _connectionErrors.clear();
         } else if (oldState == SignedOut && _state == Disconnected) {
             checkConnectivity();
+        }
+        if (oldState == Connected || _state == Connected) {
+            emit isConnectedChanged();
         }
     }
 
@@ -177,7 +190,8 @@ void AccountState::checkConnectivity()
     } else {
         // Check the server and then the auth.
 
-#ifdef Q_OS_WIN
+// Let's try this for all OS and see if it fixes the Qt issues we have on Linux  #4720 #3888 #4051
+//#ifdef Q_OS_WIN
         // There seems to be a bug in Qt on Windows where QNAM sometimes stops
         // working correctly after the computer woke up from sleep. See #2895 #2899
         // and #2973.
@@ -188,7 +202,7 @@ void AccountState::checkConnectivity()
         // If we don't reset the ssl config a second CheckServerJob can produce a
         // ssl config that does not have a sensible certificate chain.
         account()->setSslConfiguration(QSslConfiguration());
-#endif
+//#endif
         conValidator->checkServerAndAuth();
     }
 }
@@ -196,6 +210,7 @@ void AccountState::checkConnectivity()
 void AccountState::slotConnectionValidatorResult(ConnectionValidator::Status status, const QStringList& errors)
 {
     if (isSignedOut()) {
+        qDebug() << "Signed out, ignoring" << connectionStatusString(status) << _account->url().toString();
         return;
     }
 

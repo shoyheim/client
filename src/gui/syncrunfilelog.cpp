@@ -81,13 +81,16 @@ QString SyncRunFileLog::instructionToStr( csync_instructions_e inst )
     case CSYNC_INSTRUCTION_TYPE_CHANGE:
         re = "INST_TYPE_CHANGE";
         break;
+    case CSYNC_INSTRUCTION_UPDATE_METADATA:
+        re = "INST_METADATA";
+        break;
     }
 
     return re;
 }
 
 
-void SyncRunFileLog::start(const QString &folderPath,  const Utility::StopWatch &stopWatch )
+void SyncRunFileLog::start(const QString &folderPath)
 {
     const qint64 logfileMaxSize = 1024*1024; // 1MiB
 
@@ -108,8 +111,6 @@ void SyncRunFileLog::start(const QString &folderPath,  const Utility::StopWatch 
     _file->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     _out.setDevice( _file.data() );
 
-    QDateTime dt = stopWatch.startTime();
-    QDateTime de = stopWatch.timeOfLap(QLatin1String("Sync Finished"));
 
     if (!exists) {
         // We are creating a new file, add the note.
@@ -122,8 +123,9 @@ void SyncRunFileLog::start(const QString &folderPath,  const Utility::StopWatch 
     }
 
 
-    _out << "#=#=#=# Syncrun started " << dateTimeStr(dt) << " until " << dateTimeStr(de) << " ("
-            << stopWatch.durationOfLap(QLatin1String("Sync Finished")) << " msec)" << endl;
+    _totalDuration.start();
+    _lapDuration.start();
+    _out << "#=#=#=# Syncrun started " << dateTimeStr(QDateTime::currentDateTime()) << endl;
 }
 
 void SyncRunFileLog::logItem( const SyncFileItem& item )
@@ -143,7 +145,11 @@ void SyncRunFileLog::logItem( const SyncFileItem& item )
     const QChar L = QLatin1Char('|');
     _out << ts << L;
     _out << QString::number(item._requestDuration) << L;
-    _out << item._file << L;
+    if( item.log._instruction != CSYNC_INSTRUCTION_RENAME ) {
+        _out << item._file << L;
+    } else {
+        _out << item._file << QLatin1String(" -> ") << item._renameTarget << L;
+    }
     _out << instructionToStr( item.log._instruction ) << L;
     _out << directionToStr( item._direction ) << L;
     _out << QString::number(item.log._modtime) << L;
@@ -162,8 +168,18 @@ void SyncRunFileLog::logItem( const SyncFileItem& item )
     _out << endl;
 }
 
-void SyncRunFileLog::close()
+void SyncRunFileLog::logLap(const QString& name)
 {
+    _out << "#=#=#=#=# " << name << " " << dateTimeStr(QDateTime::currentDateTime())
+         << " (last step: " << _lapDuration.restart() << " msec"
+         << ", total: " << _totalDuration.elapsed() << " msec)" << endl;
+}
+
+void SyncRunFileLog::finish()
+{
+    _out << "#=#=#=# Syncrun finished " << dateTimeStr(QDateTime::currentDateTime())
+         << " (last step: " << _lapDuration.elapsed() << " msec"
+         << ", total: " << _totalDuration.elapsed() << " msec)" << endl;
     _file->close();
 }
 

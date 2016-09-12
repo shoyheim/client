@@ -21,10 +21,14 @@ import socket
 
 from gi.repository import GObject, Nautilus
 
-print("Initializing owncloud-client-nautilus extension")
-
-# Do not touch the following line.
+# Please do not touch the following line.
+# The reason is that we use a script to adopt this file for branding
+# by replacing this line with the branding app name. If the following
+# line is changed, the script can not match the pattern and fails.
 appname = 'ownCloud'
+
+print("Initializing "+appname+"-client-nautilus extension")
+
 
 def get_local_path(url):
     if url[0:7] == 'file://':
@@ -66,6 +70,7 @@ class SocketConnect(GObject.GObject):
         GObject.timeout_add(5000, self._connectToSocketServer)
 
     def sendCommand(self, cmd):
+        # print("Server command: " + cmd)
         if self.connected:
             try:
                 self._sock.send(cmd)
@@ -180,10 +185,10 @@ class MenuExtension(GObject.GObject, Nautilus.MenuProvider):
         if not syncedFile:
             return items
 
-        # Create an menu item
+        # Create a menu item
         labelStr = "Share with " + appname + "..."
         item = Nautilus.MenuItem(name='NautilusPython::ShareItem', label=labelStr,
-                tip='Share file %s through ownCloud' % file.get_name())
+                tip='Share file {} through {}'.format(file.get_name(), appname) )
         item.connect("activate", self.menu_share, file)
         items.append(item)
 
@@ -225,41 +230,43 @@ class SyncStateExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.Info
             for p in socketConnect.nautilusVFSFile_table:
                 if p == path or p.startswith(path):
                     item = socketConnect.nautilusVFSFile_table[p]['item']
-                    update_items.append(item)
+                    update_items.append(p)
 
-            for item in update_items:
-                item.invalidate_extension_info()
+            for path1 in update_items:
+                socketConnect.nautilusVFSFile_table[path1]['item'].invalidate_extension_info()
 
     # Handles a single line of server response and sets the emblem
     def handle_commands(self, action, args):
-        Emblems = { 'OK'        : appname +'_ok',
-                    'SYNC'      : appname +'_sync',
-                    'NEW'       : appname +'_sync',
-                    'IGNORE'    : appname +'_warn',
-                    'ERROR'     : appname +'_error',
-                    'OK+SWM'    : appname +'_ok_shared',
-                    'SYNC+SWM'  : appname +'_sync_shared',
-                    'NEW+SWM'   : appname +'_sync_shared',
-                    'IGNORE+SWM': appname +'_warn_shared',
-                    'ERROR+SWM' : appname +'_error_shared',
-                    'NOP'       : appname +'_error'
-                  }
-
         # file = args[0]  # For debug only
         # print("Action for " + file + ": " + args[0])  # For debug only
         if action == 'STATUS':
             newState = args[0]
-            emblem = Emblems[newState]
             filename = ':'.join(args[1:])
 
-            if emblem:
-                itemStore = self.find_item_for_file(filename)
-                if itemStore:
-                    if( not itemStore['state'] or newState != itemStore['state'] ):
-                        item = itemStore['item']
-                        item.add_emblem(emblem)
-                        # print("Setting emblem on " + filename + "<>" + emblem + "<>")  # For debug only
-                        socketConnect.nautilusVFSFile_table[filename] = {'item': item, 'state':newState}
+            itemStore = self.find_item_for_file(filename)
+            if itemStore:
+                if( not itemStore['state'] or newState != itemStore['state'] ):
+                    item = itemStore['item']
+
+                    # print("Setting emblem on " + filename + "<>" + emblem + "<>")  # For debug only
+
+                    # If an emblem is already set for this item, we need to
+                    # clear the existing extension info before setting a new one.
+                    #
+                    # That will also trigger a new call to
+                    # update_file_info for this item! That's why we set
+                    # skipNextUpdate to True: we don't want to pull the
+                    # current data from the client after getting a push
+                    # notification.
+                    invalidate = itemStore['state'] != None
+                    if invalidate:
+                        item.invalidate_extension_info()
+                    self.set_emblem(item, newState)
+
+                    socketConnect.nautilusVFSFile_table[filename] = {
+                        'item': item,
+                        'state': newState,
+                        'skipNextUpdate': invalidate }
 
         elif action == 'UPDATE_VIEW':
             # Search all items underneath this path and invalidate them
@@ -271,6 +278,25 @@ class SyncStateExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.Info
         elif action == 'UNREGISTER_PATH':
             self.invalidate_items_underneath(args[0])
 
+    def set_emblem(self, item, state):
+        Emblems = { 'OK'        : appname +'_ok',
+                    'SYNC'      : appname +'_sync',
+                    'NEW'       : appname +'_sync',
+                    'IGNORE'    : appname +'_warn',
+                    'ERROR'     : appname +'_error',
+                    'OK+SWM'    : appname +'_ok_shared',
+                    'SYNC+SWM'  : appname +'_sync_shared',
+                    'NEW+SWM'   : appname +'_sync_shared',
+                    'IGNORE+SWM': appname +'_warn_shared',
+                    'ERROR+SWM' : appname +'_error_shared',
+                    'NOP'       : ''
+                  }
+
+        emblem = 'NOP' # Show nothing if no emblem is defined.
+        if state in Emblems:
+            emblem = Emblems[state]
+        item.add_emblem(emblem)
+
     def update_file_info(self, item):
         if item.get_uri_scheme() != 'file':
             return
@@ -279,13 +305,28 @@ class SyncStateExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.Info
         if item.is_directory():
             filename += '/'
 
+        inScope = False
         for reg_path in socketConnect.registered_paths:
             if filename.startswith(reg_path):
-                socketConnect.nautilusVFSFile_table[filename] = {'item': item, 'state':''}
-
-                # item.add_string_attribute('share_state', "share state")  # ?
-                self.askForOverlay(filename)
+                inScope = True
                 break
-            else:
-                # print("Not in scope:" + filename)  # For debug only
-                pass
+
+        if not inScope:
+            return
+
+        # Ask for the current state from the client -- unless this update was
+        # triggered by receiving a STATUS message from the client in the first
+        # place.
+        itemStore = self.find_item_for_file(filename)
+        if itemStore and itemStore['skipNextUpdate'] and itemStore['state']:
+            itemStore['skipNextUpdate'] = False
+            itemStore['item'] = item
+            self.set_emblem(item, itemStore['state'])
+        else:
+            socketConnect.nautilusVFSFile_table[filename] = {
+                'item': item,
+                'state': None,
+                'skipNextUpdate': False }
+
+            # item.add_string_attribute('share_state', "share state")  # ?
+            self.askForOverlay(filename)

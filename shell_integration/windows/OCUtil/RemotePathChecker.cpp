@@ -1,5 +1,5 @@
 /**
-* Copyright (c) 2014 ownCloud, Inc. All rights reserved.
+* Copyright (c) 2014 ownCloud GmbH. All rights reserved.
 *
 * This library is free software; you can redistribute it and/or modify it under
 * the terms of the GNU Lesser General Public License as published by the Free
@@ -31,13 +31,10 @@
 
 using namespace std;
 
-
 // This code is run in a thread
 void RemotePathChecker::workerThreadLoop()
 {
-    auto pipename = std::wstring(L"\\\\.\\pipe\\");
-    pipename += L"ownCloud";
-
+    auto pipename = CommunicationSocket::DefaultPipePath();
     bool connected = false;
     CommunicationSocket socket;
     std::unordered_set<std::wstring> asked;

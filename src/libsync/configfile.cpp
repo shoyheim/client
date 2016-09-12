@@ -42,7 +42,9 @@ namespace OCC {
 //static const char caCertsKeyC[] = "CaCertificates"; only used from account.cpp
 static const char remotePollIntervalC[] = "remotePollInterval";
 static const char forceSyncIntervalC[] = "forceSyncInterval";
+static const char notificationRefreshIntervalC[] = "notificationRefreshInterval";
 static const char monoIconsC[] = "monoIcons";
+static const char promptDeleteC[] = "promptDeleteAllFiles";
 static const char crashReporterC[] = "crashReporter";
 static const char optionalDesktopNoficationsC[] = "optionalDesktopNotifications";
 static const char skipUpdateCheckC[] = "skipUpdateCheck";
@@ -50,7 +52,6 @@ static const char updateCheckIntervalC[] = "updateCheckInterval";
 static const char geometryC[] = "geometry";
 static const char timeoutC[] = "timeout";
 static const char chunkSizeC[] = "chunkSize";
-static const char transmissionChecksumC[] = "transmissionChecksum";
 
 static const char proxyHostC[] = "Proxy/host";
 static const char proxyTypeC[] = "Proxy/type";
@@ -124,21 +125,7 @@ int ConfigFile::timeout() const
 quint64 ConfigFile::chunkSize() const
 {
     QSettings settings(configFile(), QSettings::IniFormat);
-    return settings.value(QLatin1String(chunkSizeC), 5*1024*1024).toLongLong(); // default to 5 MiB
-}
-
-QString ConfigFile::transmissionChecksum() const
-{
-    QSettings settings(configFile(), QSettings::IniFormat);
-
-    QString checksum = settings.value(QLatin1String(transmissionChecksumC), QString()).toString();
-
-    if( checksum.isEmpty() ) {
-        // if the config file setting is empty, maybe the Branding requires it.
-        checksum = Theme::instance()->transmissionChecksum();
-    }
-
-    return checksum;
+    return settings.value(QLatin1String(chunkSizeC), 10*1000*1000).toLongLong(); // default to 10 MB
 }
 
 void ConfigFile::setOptionalDesktopNotifications(bool show)
@@ -389,6 +376,22 @@ quint64 ConfigFile::forceSyncInterval(const QString& connection) const
     return interval;
 }
 
+quint64 ConfigFile::notificationRefreshInterval(const QString& connection) const
+{
+    QString con( connection );
+    if( connection.isEmpty() ) con = defaultConnection();
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.beginGroup( con );
+
+    quint64 defaultInterval = 5 * 60 * 1000ull; // 5 minutes
+    quint64 interval = settings.value( QLatin1String(notificationRefreshIntervalC), defaultInterval ).toULongLong();
+    if( interval < 60*1000ull) {
+        qDebug() << "notification refresh interval smaller than one minute, setting to one minute";
+        interval = 60*1000ull;
+    }
+    return interval;
+}
+
 int ConfigFile::updateCheckInterval( const QString& connection ) const
 {
     QString con( connection );
@@ -507,6 +510,9 @@ void ConfigFile::setValue(const QString& key, const QVariant &value)
 
 int ConfigFile::proxyType() const
 {
+    if (Theme::instance()->forceSystemNetworkProxy()) {
+        return QNetworkProxy::DefaultProxy;
+    }
     return getValue(QLatin1String(proxyTypeC)).toInt();
 }
 
@@ -588,6 +594,18 @@ void ConfigFile::setNewBigFolderSizeLimit(bool isChecked, quint64 mbytes)
 {
     setValue(newBigFolderSizeLimitC, mbytes);
     setValue(useNewBigFolderSizeLimitC, isChecked);
+}
+
+bool ConfigFile::promptDeleteFiles() const
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    return settings.value(QLatin1String(promptDeleteC), true).toBool();
+}
+
+void ConfigFile::setPromptDeleteFiles(bool promptDeleteFiles)
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.setValue(QLatin1String(promptDeleteC), promptDeleteFiles);
 }
 
 bool ConfigFile::monoIcons() const

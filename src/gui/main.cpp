@@ -51,14 +51,17 @@ int main(int argc, char **argv)
     // If the font size ratio is set on Windows, we need to
     // enable the auto pixelRatio in Qt since we don't
     // want to use sizes relative to the font size everywhere.
-    // This is automatic on OS X, but opt-in on Windows
+    // This is automatic on OS X, but opt-in on Windows and Linux
     // https://doc-snapshots.qt.io/qt5-5.6/highdpi.html#qt-support
-#if QT_VERSION < QT_VERSION_CHECK(5, 6, 0)
-    qputenv("QT_DEVICE_PIXEL_RATIO", "auto");
-#else
+    // We do not define it on linux so the behaviour is kept the same
+    // as other Qt apps in the desktop environment. (which may or may
+    // not set this envoronment variable)
+#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
     qputenv("QT_AUTO_SCREEN_SCALE_FACTOR", "1");
+#else
+    qputenv("QT_DEVICE_PIXEL_RATIO", "auto"); // See #4840, #4994
 #endif
-#endif // Q_OS_WIN
+#endif // !Q_OS_WIN
 
 #ifdef Q_OS_MAC
     Mac::CocoaInitializer cocoaInit; // RIIA
@@ -127,8 +130,17 @@ int main(int argc, char **argv)
             return -1;
         }
         return 0;
-    } else {
+    }
+#if QT_VERSION > QT_VERSION_CHECK(5, 0, 0)
+    if (qgetenv("QT_QPA_PLATFORMTHEME") != "appmenu-qt5")
+        // We can't call isSystemTrayAvailable with appmenu-qt5 begause it hides the systemtray
+        // (issue #4693)
+#endif
+    {
         if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+            // If the systemtray is not there, we will wait one second for it to maybe start
+            // (eg boot time) then we show the settings dialog if there is still no systemtray.
+            // On XFCE however, we show a message box with explainaition how to install a systemtray.
             Utility::sleep(1);
             auto desktopSession = qgetenv("XDG_CURRENT_DESKTOP").toLower();
             if (desktopSession.isEmpty()) {
@@ -152,6 +164,7 @@ int main(int argc, char **argv)
             }
         }
     }
+
     return app.exec();
 }
 

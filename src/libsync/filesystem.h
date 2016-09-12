@@ -111,9 +111,9 @@ bool OWNCLOUDSYNC_EXPORT rename(const QString& originFileName,
  *
  * @return true if the file's mtime or size are not what is expected.
  */
-bool fileChanged(const QString& fileName,
-                 qint64 previousSize,
-                 time_t previousMtime);
+bool OWNCLOUDSYNC_EXPORT fileChanged(const QString& fileName,
+                                     qint64 previousSize,
+                                     time_t previousMtime);
 
 /**
  * @brief Like !fileChanged() but with verbose logging if the file *did* change.
@@ -181,6 +181,11 @@ QByteArray OWNCLOUDSYNC_EXPORT calcAdler32( const QString& fileName );
  * Returns a file name based on \a fn that's suitable for a conflict.
  */
 QString OWNCLOUDSYNC_EXPORT makeConflictFileName(const QString &fn, const QDateTime &dt);
+
+/**
+ * Returns true when a file is locked. (Windows only)
+ */
+bool OWNCLOUDSYNC_EXPORT isFileLocked(const QString& fileName);
 
 }
 

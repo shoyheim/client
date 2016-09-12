@@ -88,6 +88,11 @@ public:
 
     virtual JobParallelism parallelism() { return FullParallelism; }
 
+    /**
+     * For "small" jobs
+     */
+    virtual bool isLikelyFinishedQuickly() { return false; }
+
     /** The space that the running jobs need to complete but don't actually use yet.
      *
      * Note that this does *not* include the disk space that's already
@@ -278,7 +283,6 @@ public:
             , _journal(progressDb)
             , _finishedEmited(false)
             , _bandwidthManager(this)
-            , _activeJobs(0)
             , _anotherSyncNeeded(false)
             , _account(account)
     { }
@@ -293,14 +297,20 @@ public:
 
     QAtomicInt _abortRequested; // boolean set by the main thread to abort.
 
-    /* The number of currently active jobs */
-    int _activeJobs;
+    /** The list of currently active jobs.
+        This list contains the jobs that are currently using ressources and is used purely to
+        know how many jobs there is currently running for the scheduler.
+        Jobs add themself to the list when they do an assynchronous operation.
+        Jobs can be several time on the list (example, when several chunks are uploaded in parallel)
+     */
+    QList<PropagateItemJob*> _activeJobList;
 
     /** We detected that another sync is required after this one */
     bool _anotherSyncNeeded;
 
     /* The maximum number of active jobs in parallel  */
     int maximumActiveJob();
+    int hardMaximumActiveJob();
 
     bool isInSharedDirectory(const QString& file);
     bool localFileNameClash(const QString& relfile);
@@ -311,7 +321,7 @@ public:
         if (_rootJob) {
             _rootJob->abort();
         }
-        emitFinished();
+        emitFinished(SyncFileItem::NormalError);
     }
 
     // timeout in seconds
@@ -319,18 +329,6 @@ public:
 
     /** returns the size of chunks in bytes  */
     static quint64 chunkSize();
-
-    /** Records that a file was touched by a job.
-     *
-     * Thread-safe.
-     */
-    void addTouchedFile(const QString& fn);
-
-    /** Get the ms since a file was touched, or -1 if it wasn't.
-     *
-     * Thread-safe.
-     */
-    qint64 timeSinceFileTouched(const QString& fn) const;
 
     AccountPtr account() const;
 
@@ -351,9 +349,9 @@ public:
 private slots:
 
     /** Emit the finished signal and make sure it is only emitted once */
-    void emitFinished() {
+    void emitFinished(SyncFileItem::Status status) {
         if (!_finishedEmited)
-            emit finished();
+            emit finished(status == SyncFileItem::Success);
         _finishedEmited = true;
     }
 
@@ -362,15 +360,30 @@ private slots:
 signals:
     void itemCompleted(const SyncFileItem &, const PropagatorJob &);
     void progress(const SyncFileItem&, quint64 bytes);
-    void finished();
+    void finished(bool success);
+
+    /** Emitted when propagation has problems with a locked file. */
+    void seenLockedFile(const QString &fileName);
+
+    /** Emitted when propagation touches a file.
+     *
+     * Used to track our own file modifications such that notifications
+     * from the file watcher about these can be ignored.
+     */
+    void touchedFile(const QString &fileName);
 
 private:
 
     AccountPtr _account;
 
-    /** Stores the time since a job touched a file. */
-    QHash<QString, QElapsedTimer> _touchedFiles;
-    mutable QMutex _touchedFilesMutex;
+#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
+    // access to signals which are protected in Qt4
+    friend class PropagateDownloadFile;
+    friend class PropagateUploadFile;
+    friend class PropagateLocalMkdir;
+    friend class PropagateLocalRename;
+    friend class PropagateRemoteMove;
+#endif
 };
 
 
@@ -391,6 +404,10 @@ public:
 
     ~CleanupPollsJob();
 
+    /**
+     * Start the job.  After the job is completed, it will emit either finished or aborted, and it
+     * will destroy itself.
+     */
     void start();
 signals:
     void finished();

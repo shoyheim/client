@@ -163,7 +163,7 @@ void PropagateLocalMkdir::start()
         done( SyncFileItem::NormalError, tr("Attention, possible case sensitivity clash with %1").arg(newDirStr) );
         return;
     }
-    _propagator->addTouchedFile(newDirStr);
+    emit _propagator->touchedFile(newDirStr);
     QDir localDir(_propagator->_localDir);
     if (!localDir.mkpath(_item->_file)) {
         done( SyncFileItem::NormalError, tr("could not create folder %1").arg(newDirStr) );
@@ -177,7 +177,10 @@ void PropagateLocalMkdir::start()
     // before the correct etag is stored.
     SyncJournalFileRecord record(*_item, newDirStr);
     record._etag = "_invalid_";
-    _propagator->_journal->setFileRecord(record);
+    if (!_propagator->_journal->setFileRecord(record)) {
+        done(SyncFileItem::FatalError, tr("Error writing metadata to the database"));
+        return;
+    }
     _propagator->_journal->commit("localMkdir");
 
     done(SyncFileItem::Success);
@@ -214,8 +217,8 @@ void PropagateLocalRename::start()
             return;
         }
 
-        _propagator->addTouchedFile(existingFile);
-        _propagator->addTouchedFile(targetFile);
+        emit _propagator->touchedFile(existingFile);
+        emit _propagator->touchedFile(targetFile);
         QString renameError;
         if (!FileSystem::rename(existingFile, targetFile, &renameError)) {
             done(SyncFileItem::NormalError, renameError);
@@ -232,11 +235,16 @@ void PropagateLocalRename::start()
 
     SyncJournalFileRecord record(*_item, targetFile);
     record._path = _item->_renameTarget;
-    record._contentChecksum = oldRecord._contentChecksum;
-    record._contentChecksumType = oldRecord._contentChecksumType;
+    if (oldRecord.isValid()) {
+        record._contentChecksum = oldRecord._contentChecksum;
+        record._contentChecksumType = oldRecord._contentChecksumType;
+    }
 
     if (!_item->_isDirectory) { // Directories are saved at the end
-        _propagator->_journal->setFileRecord(record);
+        if (!_propagator->_journal->setFileRecord(record)) {
+            done(SyncFileItem::FatalError, tr("Error writing metadata to the database"));
+            return;
+        }
     }
     _propagator->_journal->commit("localRename");
 

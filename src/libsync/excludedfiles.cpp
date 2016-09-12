@@ -12,10 +12,9 @@
  */
 
 #include "excludedfiles.h"
+#include "utility.h"
 
 #include <QFileInfo>
-#include <QReadLocker>
-#include <QWriteLocker>
 
 extern "C" {
 #include "std/c_string.h"
@@ -25,49 +24,62 @@ extern "C" {
 
 using namespace OCC;
 
-ExcludedFiles::ExcludedFiles()
-    : _excludes(NULL)
+ExcludedFiles::ExcludedFiles(c_strlist_t** excludesPtr)
+    : _excludesPtr(excludesPtr)
 {
 }
 
 ExcludedFiles::~ExcludedFiles()
 {
-    c_strlist_destroy(_excludes);
+    c_strlist_destroy(*_excludesPtr);
 }
 
 ExcludedFiles& ExcludedFiles::instance()
 {
-    static ExcludedFiles inst;
+    static c_strlist_t* globalExcludes;
+    static ExcludedFiles inst(&globalExcludes);
     return inst;
 }
 
 void ExcludedFiles::addExcludeFilePath(const QString& path)
 {
-    QWriteLocker locker(&_mutex);
-    _excludeFiles.append(path);
+    _excludeFiles.insert(path);
 }
 
-void ExcludedFiles::reloadExcludes()
+#ifdef WITH_UNIT_TESTING
+void ExcludedFiles::addExcludeExpr(const QString &expr)
 {
-    QWriteLocker locker(&_mutex);
-    c_strlist_destroy(_excludes);
-    _excludes = NULL;
+    _csync_exclude_add(_excludesPtr, expr.toLatin1().constData());
+}
+#endif
 
+bool ExcludedFiles::reloadExcludes()
+{
+    c_strlist_destroy(*_excludesPtr);
+    *_excludesPtr = NULL;
+
+    bool success = true;
     foreach (const QString& file, _excludeFiles) {
-        csync_exclude_load(file.toUtf8(), &_excludes);
+        if (csync_exclude_load(file.toUtf8(), _excludesPtr) < 0)
+            success = false;
     }
+    return success;
 }
 
-CSYNC_EXCLUDE_TYPE ExcludedFiles::isExcluded(
-        const QString& fullPath,
-        const QString& relativePath,
+bool ExcludedFiles::isExcluded(
+        const QString& filePath,
+        const QString& basePath,
         bool excludeHidden) const
 {
-    QFileInfo fi(fullPath);
+    if (!filePath.startsWith(basePath, Utility::fsCasePreserving() ? Qt::CaseInsensitive : Qt::CaseSensitive)) {
+        // Mark paths we're not responsible for as excluded...
+        return true;
+    }
 
+    QFileInfo fi(filePath);
     if( excludeHidden ) {
         if( fi.isHidden() || fi.fileName().startsWith(QLatin1Char('.')) ) {
-            return CSYNC_FILE_EXCLUDE_HIDDEN;
+            return true;
         }
     }
 
@@ -75,6 +87,11 @@ CSYNC_EXCLUDE_TYPE ExcludedFiles::isExcluded(
     if (fi.isDir()) {
         type = CSYNC_FTW_TYPE_DIR;
     }
-    QReadLocker lock(&_mutex);
-    return csync_excluded_no_ctx(_excludes, relativePath.toUtf8(), type);
+
+    QString relativePath = filePath.mid(basePath.size());
+    if (relativePath.endsWith(QLatin1Char('/'))) {
+        relativePath.chop(1);
+    }
+
+    return csync_excluded_no_ctx(*_excludesPtr, relativePath.toUtf8(), type) != CSYNC_NOT_EXCLUDED;
 }

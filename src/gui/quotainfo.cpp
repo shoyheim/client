@@ -15,7 +15,9 @@
 #include "account.h"
 #include "accountstate.h"
 #include "networkjobs.h"
+#include "folderman.h"
 #include "creds/abstractcredentials.h"
+#include <theme.h>
 
 #include <QTimer>
 #include <QDebug>
@@ -79,6 +81,11 @@ bool QuotaInfo::canGetQuota() const
         && account->credentials()->ready();
 }
 
+QString QuotaInfo::quotaBaseFolder() const
+{
+    return Theme::instance()->quotaBaseFolder();
+}
+
 void QuotaInfo::slotCheckQuota()
 {
     if (! canGetQuota()) {
@@ -91,7 +98,7 @@ void QuotaInfo::slotCheckQuota()
     }
 
     AccountPtr account = _accountState->account();
-    _job = new PropfindJob(account, "/", this);
+    _job = new PropfindJob(account, quotaBaseFolder(), this);
     _job->setProperties(QList<QByteArray>() << "quota-available-bytes" << "quota-used-bytes");
     connect(_job, SIGNAL(result(QVariantMap)), SLOT(slotUpdateLastQuota(QVariantMap)));
     connect(_job, SIGNAL(networkError(QNetworkReply*)), SLOT(slotRequestFailed()));

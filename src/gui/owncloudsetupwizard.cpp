@@ -142,11 +142,15 @@ void OwncloudSetupWizard::slotDetermineAuthType(const QString &urlString)
 
 void OwncloudSetupWizard::slotOwnCloudFoundAuth(const QUrl& url, const QVariantMap &info)
 {
+    auto serverVersion = CheckServerJob::version(info);
+
     _ocWizard->appendToConfigurationLog(tr("<font color=\"green\">Successfully connected to %1: %2 version %3 (%4)</font><br/><br/>")
                                         .arg(url.toString())
                                         .arg(Theme::instance()->appNameGUI())
                                         .arg(CheckServerJob::versionString(info))
-                                        .arg(CheckServerJob::version(info)));
+                                        .arg(serverVersion));
+
+    _ocWizard->account()->setServerVersion(serverVersion);
 
     QString p = url.path();
     if (p.endsWith("/status.php")) {
@@ -173,7 +177,7 @@ void OwncloudSetupWizard::slotNoOwnCloudFoundAuth(QNetworkReply *reply)
 
     // Allow the credentials dialog to pop up again for the same URL.
     // Maybe the user just clicked 'Cancel' by accident or changed his mind.
-    _ocWizard->account()->resetSslCertErrorState();
+    _ocWizard->account()->resetRejectedCertificates();
 }
 
 void OwncloudSetupWizard::slotNoOwnCloudFoundAuthTimeout(const QUrl&url)
@@ -459,13 +463,6 @@ void OwncloudSetupWizard::slotAssistantFinished( int result )
         if (!startFromScratch || ensureStartFromScratch(localFolder)) {
             qDebug() << "Adding folder definition for" << localFolder << _remoteFolder;
             FolderDefinition folderDefinition;
-            auto alias = Theme::instance()->appName();
-            int count = 0;
-            folderDefinition.alias = alias;
-            while (folderMan->folder(folderDefinition.alias)) {
-                // There is already a folder configured with this name and folder names need to be unique
-                folderDefinition.alias = alias + QString::number(++count);
-            }
             folderDefinition.localPath = localFolder;
             folderDefinition.targetPath = _remoteFolder;
             folderDefinition.ignoreHiddenFiles = folderMan->ignoreHiddenFiles();
@@ -511,6 +508,10 @@ DetermineAuthTypeJob::DetermineAuthTypeJob(AccountPtr account, QObject *parent)
     : AbstractNetworkJob(account, QString(), parent)
     , _redirects(0)
 {
+    // This job implements special redirect handling to detect redirections
+    // to pages that are indicative of Shibboleth-using servers. Hence we
+    // disable the standard job redirection handling here.
+    _followRedirects = false;
 }
 
 void DetermineAuthTypeJob::start()
@@ -538,12 +539,15 @@ bool DetermineAuthTypeJob::finished()
         setupConnections(reply());
         return false; // don't discard
     } else {
+#ifndef NO_SHIBBOLETH
         QRegExp shibbolethyWords("SAML|wayf");
 
         shibbolethyWords.setCaseSensitivity(Qt::CaseInsensitive);
         if (redirection.toString().contains(shibbolethyWords)) {
             emit authType(WizardCommon::Shibboleth);
-        } else {
+        } else
+#endif
+        {
             // TODO: Send an error.
             // eh?
             emit authType(WizardCommon::HttpCreds);

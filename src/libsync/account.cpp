@@ -38,9 +38,6 @@ namespace OCC {
 Account::Account(QObject *parent)
     : QObject(parent)
     , _capabilities(QVariantMap())
-    , _am(0)
-    , _credentials(0)
-    , _treatSslErrorsAsFailure(false)
     , _davPath( Theme::instance()->webDavPath() )
     , _wasMigrated(false)
 {
@@ -56,8 +53,6 @@ AccountPtr Account::create()
 
 Account::~Account()
 {
-    delete _credentials;
-    delete _am;
 }
 
 QString Account::davPath() const
@@ -118,14 +113,14 @@ bool Account::changed(AccountPtr other, bool ignoreUrlProtocol) const
         changes = (_url == other->_url);
     }
 
-    changes |= _credentials->changed(other->_credentials);
+    changes |= _credentials->changed(other->credentials());
 
     return changes;
 }
 
 AbstractCredentials *Account::credentials() const
 {
-    return _credentials;
+    return _credentials.data();
 }
 
 void Account::setCredentials(AbstractCredentials *cred)
@@ -136,29 +131,27 @@ void Account::setCredentials(AbstractCredentials *cred)
         jar = _am->cookieJar();
         jar->setParent(0);
 
-        _am->deleteLater();
-    }
-
-    if (_credentials) {
-        credentials()->deleteLater();
+        _am = QSharedPointer<QNetworkAccessManager>();
     }
 
     // The order for these two is important! Reading the credential's
-    // settings accesses the account as well as account->_credentials
-    _credentials = cred;
+    // settings accesses the account as well as account->_credentials,
+    // so deleteLater must be used.
+    _credentials = QSharedPointer<AbstractCredentials>(cred, &QObject::deleteLater);
     cred->setAccount(this);
 
-    _am = _credentials->getQNAM();
+    _am = QSharedPointer<QNetworkAccessManager>(_credentials->getQNAM(), &QObject::deleteLater);
+
     if (jar) {
         _am->setCookieJar(jar);
     }
-    connect(_am, SIGNAL(sslErrors(QNetworkReply*,QList<QSslError>)),
+    connect(_am.data(), SIGNAL(sslErrors(QNetworkReply*,QList<QSslError>)),
             SLOT(slotHandleSslErrors(QNetworkReply*,QList<QSslError>)));
-    connect(_am, SIGNAL(proxyAuthenticationRequired(QNetworkProxy,QAuthenticator*)),
+    connect(_am.data(), SIGNAL(proxyAuthenticationRequired(QNetworkProxy,QAuthenticator*)),
             SIGNAL(proxyAuthenticationRequired(QNetworkProxy,QAuthenticator*)));
-    connect(_credentials, SIGNAL(fetched()),
+    connect(_credentials.data(), SIGNAL(fetched()),
             SLOT(slotCredentialsFetched()));
-    connect(_credentials, SIGNAL(asked()),
+    connect(_credentials.data(), SIGNAL(asked()),
             SLOT(slotCredentialsAsked()));
 }
 
@@ -197,18 +190,21 @@ void Account::resetNetworkAccessManager()
 
     qDebug() << "Resetting QNAM";
     QNetworkCookieJar* jar = _am->cookieJar();
-    _am->deleteLater();
-    _am = _credentials->getQNAM();
+
+    // Use a QSharedPointer to allow locking the life of the QNAM on the stack.
+    // Make it call deleteLater to make sure that we can return to any QNAM stack frames safely.
+    _am = QSharedPointer<QNetworkAccessManager>(_credentials->getQNAM(), &QObject::deleteLater);
+
     _am->setCookieJar(jar); // takes ownership of the old cookie jar
-    connect(_am, SIGNAL(sslErrors(QNetworkReply*,QList<QSslError>)),
+    connect(_am.data(), SIGNAL(sslErrors(QNetworkReply*,QList<QSslError>)),
             SLOT(slotHandleSslErrors(QNetworkReply*,QList<QSslError>)));
-    connect(_am, SIGNAL(proxyAuthenticationRequired(QNetworkProxy,QAuthenticator*)),
+    connect(_am.data(), SIGNAL(proxyAuthenticationRequired(QNetworkProxy,QAuthenticator*)),
             SIGNAL(proxyAuthenticationRequired(QNetworkProxy,QAuthenticator*)));
 }
 
 QNetworkAccessManager *Account::networkAccessManager()
 {
-    return _am;
+    return _am.data();
 }
 
 QNetworkReply *Account::headRequest(const QString &relPath)
@@ -237,6 +233,15 @@ QNetworkReply *Account::getRequest(const QUrl &url)
     request.setSslConfiguration(this->getOrCreateSslConfig());
 #endif
     return _am->get(request);
+}
+
+QNetworkReply *Account::deleteRequest( const QUrl &url)
+{
+    QNetworkRequest request(url);
+#if QT_VERSION > QT_VERSION_CHECK(4, 8, 4)
+    request.setSslConfiguration(this->getOrCreateSslConfig());
+#endif
+    return _am->deleteResource(request);
 }
 
 QNetworkReply *Account::davRequest(const QByteArray &verb, const QString &relPath, QNetworkRequest req, QIODevice *data)
@@ -320,9 +325,9 @@ void Account::addApprovedCerts(const QList<QSslCertificate> certs)
     _approvedCerts += certs;
 }
 
-void Account::resetSslCertErrorState()
+void Account::resetRejectedCertificates()
 {
-    _treatSslErrorsAsFailure = false;
+    _rejectedCertificates.clear();
 }
 
 void Account::setSslErrorHandler(AbstractSslErrorHandler *handler)
@@ -403,8 +408,15 @@ void Account::slotHandleSslErrors(QNetworkReply *reply , QList<QSslError> errors
                      << error.errorString() << "("<< error.error() << ")" << "\n";
     }
 
-    if( _treatSslErrorsAsFailure ) {
-        // User decided once not to trust. Honor this decision.
+    bool allPreviouslyRejected = true;
+    foreach (const QSslError &error, errors) {
+        if (!_rejectedCertificates.contains(error.certificate())) {
+            allPreviouslyRejected = false;
+        }
+    }
+
+    // If all certs have previously been rejected by the user, don't ask again.
+    if( allPreviouslyRejected ) {
         qDebug() << out << "Certs not trusted by user decision, returning.";
         return;
     }
@@ -415,10 +427,16 @@ void Account::slotHandleSslErrors(QNetworkReply *reply , QList<QSslError> errors
         return;
     }
 
+    // SslDialogErrorHandler::handleErrors will run an event loop that might execute
+    // the deleteLater() of the QNAM before we have the chance of unwinding our stack.
+    // Keep a ref here on our stackframe to make sure that it doesn't get deleted before
+    // handleErrors returns.
+    QSharedPointer<QNetworkAccessManager> qnamLock = _am;
+
     if (_sslErrorHandler->handleErrors(errors, reply->sslConfiguration(), &approvedCerts, sharedFromThis())) {
         QSslSocket::addDefaultCaCertificates(approvedCerts);
         addApprovedCerts(approvedCerts);
-        emit wantsAccountSaved(sharedFromThis());
+        emit wantsAccountSaved(this);
         // all ssl certs are known and accepted. We can ignore the problems right away.
 //         qDebug() << out << "Certs are known and trusted! This is not an actual error.";
 
@@ -427,7 +445,12 @@ void Account::slotHandleSslErrors(QNetworkReply *reply , QList<QSslError> errors
         // certificate changes.
         reply->ignoreSslErrors(errors);
     } else {
-        _treatSslErrorsAsFailure = true;
+        // Mark all involved certificates as rejected, so we don't ask the user again.
+        foreach (const QSslError &error, errors) {
+            if (!_rejectedCertificates.contains(error.certificate())) {
+                _rejectedCertificates.append(error.certificate());
+            }
+        }
         // if during normal operation, a new certificate was MITM'ed, and the user does not
         // ACK it, the running request must be aborted and the QNAM must be reset, to not
         // treat the new cert as granted. See bug #3283
@@ -439,12 +462,12 @@ void Account::slotHandleSslErrors(QNetworkReply *reply , QList<QSslError> errors
 
 void Account::slotCredentialsFetched()
 {
-    emit credentialsFetched(_credentials);
+    emit credentialsFetched(_credentials.data());
 }
 
 void Account::slotCredentialsAsked()
 {
-    emit credentialsAsked(_credentials);
+    emit credentialsAsked(_credentials.data());
 }
 
 void Account::handleInvalidCredentials()
@@ -472,23 +495,38 @@ void Account::setCapabilities(const QVariantMap &caps)
     _capabilities = Capabilities(caps);
 }
 
-QString Account::serverVersion()
+QString Account::serverVersion() const
 {
     return _serverVersion;
 }
 
-int Account::serverVersionInt()
+int Account::serverVersionInt() const
 {
     // FIXME: Use Qt 5.5 QVersionNumber
     auto components = serverVersion().split('.');
     return  (components.value(0).toInt() << 16)
                    + (components.value(1).toInt() << 8)
-                   + components.value(2).toInt();
+            + components.value(2).toInt();
+}
+
+bool Account::serverVersionUnsupported() const
+{
+    if (serverVersionInt() == 0) {
+        // not detected yet, assume it is fine.
+        return false;
+    }
+    return serverVersionInt() < 0x070000;
 }
 
 void Account::setServerVersion(const QString& version)
 {
+    if (version == _serverVersion) {
+        return;
+    }
+
+    auto oldServerVersion = _serverVersion;
     _serverVersion = version;
+    emit serverVersionChanged(this, oldServerVersion, version);
 }
 
 bool Account::rootEtagChangesNotOnlySubFolderEtags()

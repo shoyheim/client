@@ -105,6 +105,12 @@ Application::Application(int &argc, char **argv) :
 {
     _startedAt.start();
 
+#ifdef Q_OS_WIN
+    // Ensure OpenSSL config file is only loaded from app directory
+    QString opensslConf = QCoreApplication::applicationDirPath()+QString("/openssl.cnf");
+    qputenv("OPENSSL_CONF", opensslConf.toLocal8Bit());
+#endif
+
 // TODO: Can't set this without breaking current config paths
 //    setOrganizationName(QLatin1String(APPLICATION_VENDOR));
     setOrganizationDomain(QLatin1String(APPLICATION_REV_DOMAIN));
@@ -139,6 +145,7 @@ Application::Application(int &argc, char **argv) :
     setupTranslations();
 
     // Setup global excludes
+    qDebug() << "Loading global exclude list";
     ConfigFile cfg;
     ExcludedFiles& excludes = ExcludedFiles::instance();
     excludes.addExcludeFilePath( cfg.excludeFile(ConfigFile::SystemScope) );
@@ -219,10 +226,14 @@ void Application::slotAccountStateRemoved(AccountState *accountState)
     if (_gui) {
         disconnect(accountState, SIGNAL(stateChanged(int)),
                    _gui, SLOT(slotAccountStateChanged()));
+        disconnect(accountState->account().data(), SIGNAL(serverVersionChanged(Account*,QString,QString)),
+                   _gui, SLOT(slotTrayMessageIfServerUnsupported(Account*)));
     }
     if (_folderManager) {
         disconnect(accountState, SIGNAL(stateChanged(int)),
                    _folderManager.data(), SLOT(slotAccountStateChanged()));
+        disconnect(accountState->account().data(), SIGNAL(serverVersionChanged(Account*,QString,QString)),
+                   _folderManager.data(), SLOT(slotServerVersionChanged(Account*)));
     }
 
     // if there is no more account, show the wizard.
@@ -237,8 +248,14 @@ void Application::slotAccountStateAdded(AccountState *accountState)
 {
     connect(accountState, SIGNAL(stateChanged(int)),
             _gui, SLOT(slotAccountStateChanged()));
+    connect(accountState->account().data(), SIGNAL(serverVersionChanged(Account*,QString,QString)),
+            _gui, SLOT(slotTrayMessageIfServerUnsupported(Account*)));
     connect(accountState, SIGNAL(stateChanged(int)),
             _folderManager.data(), SLOT(slotAccountStateChanged()));
+    connect(accountState->account().data(), SIGNAL(serverVersionChanged(Account*,QString,QString)),
+            _folderManager.data(), SLOT(slotServerVersionChanged(Account*)));
+
+    _gui->slotTrayMessageIfServerUnsupported(accountState->account().data());
 }
 
 void Application::slotCleanup()
@@ -325,6 +342,14 @@ void Application::slotownCloudWizardDone( int res )
     }
 }
 
+static void csyncLogCatcher(int /*verbosity*/,
+                        const char */*function*/,
+                        const char *buffer,
+                        void */*userdata*/)
+{
+    Logger::instance()->csyncLog( QString::fromUtf8(buffer) );
+}
+
 void Application::setupLogging()
 {
     // might be called from second instance
@@ -335,11 +360,15 @@ void Application::setupLogging()
 
     Logger::instance()->enterNextLogFile();
 
-    qDebug() << QString::fromLatin1( "################## %1 %2 (%3) %4").arg(_theme->appName())
+    qDebug() << QString::fromLatin1( "################## %1 %2 (%3) %4 on %5").arg(_theme->appName())
                 .arg( QLocale::system().name() )
                 .arg(property("ui_lang").toString())
-                .arg(_theme->version());
+                .arg(_theme->version())
+                .arg(Utility::platformName());
 
+    // Setup CSYNC logging to forward to our own logger
+    csync_set_log_callback( csyncLogCatcher );
+    csync_set_log_level( Logger::instance()->isNoop() ? 0 : 11 );
 }
 
 void Application::slotUseMonoIconsChanged(bool)

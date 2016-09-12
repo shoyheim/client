@@ -40,11 +40,62 @@
 #define CSYNC_LOG_CATEGORY_NAME "csync.exclude"
 #include "csync_log.h"
 
-#ifndef NDEBUG
+#ifndef WITH_UNIT_TESTING
 static
 #endif
 int _csync_exclude_add(c_strlist_t **inList, const char *string) {
+    size_t i = 0;
+
+    // We never want duplicates, so check whether the string is already
+    // in the list first.
+    if (*inList) {
+        for (i = 0; i < (*inList)->count; ++i) {
+            char *pattern = (*inList)->vector[i];
+            if (c_streq(pattern, string)) {
+                return 1;
+            }
+        }
+    }
     return c_strlist_add_grow(inList, string);
+}
+
+/** Expands C-like escape sequences.
+ *
+ * The returned string is heap-allocated and owned by the caller.
+ */
+static const char *csync_exclude_expand_escapes(const char * input)
+{
+    size_t i_len = strlen(input) + 1;
+    char *out = c_malloc(i_len); // out can only be shorter
+
+    size_t i = 0;
+    size_t o = 0;
+    for (; i < i_len; ++i) {
+        if (input[i] == '\\') {
+            // at worst input[i+1] is \0
+            switch (input[i+1]) {
+            case '\'': out[o++] = '\''; break;
+            case '"': out[o++] = '"'; break;
+            case '?': out[o++] = '?'; break;
+            case '\\': out[o++] = '\\'; break;
+            case 'a': out[o++] = '\a'; break;
+            case 'b': out[o++] = '\b'; break;
+            case 'f': out[o++] = '\f'; break;
+            case 'n': out[o++] = '\n'; break;
+            case 'r': out[o++] = '\r'; break;
+            case 't': out[o++] = '\t'; break;
+            case 'v': out[o++] = '\v'; break;
+            default:
+                out[o++] = input[i];
+                out[o++] = input[i+1];
+                break;
+            }
+            ++i;
+        } else {
+            out[o++] = input[i];
+        }
+    }
+    return out;
 }
 
 int csync_exclude_load(const char *fname, c_strlist_t **list) {
@@ -99,8 +150,12 @@ int csync_exclude_load(const char *fname, c_strlist_t **list) {
       if (entry != buf + i) {
         buf[i] = '\0';
         if (*entry != '#') {
-          CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "Adding entry: %s", entry);
-          rc = _csync_exclude_add(list, entry);
+          const char *unescaped = csync_exclude_expand_escapes(entry);
+          rc = _csync_exclude_add(list, unescaped);
+          if( rc == 0 ) {
+              CSYNC_LOG(CSYNC_LOG_PRIORITY_TRACE, "Adding entry: %s", unescaped);
+          }
+          SAFE_FREE(unescaped);
           if (rc < 0) {
               goto out;
           }
@@ -115,23 +170,6 @@ out:
   SAFE_FREE(buf);
   close(fd);
   return rc;
-}
-
-void csync_exclude_clear(CSYNC *ctx) {
-  c_strlist_clear(ctx->excludes);
-}
-
-void csync_exclude_destroy(CSYNC *ctx) {
-  c_strlist_destroy(ctx->excludes);
-}
-
-CSYNC_EXCLUDE_TYPE csync_excluded(CSYNC *ctx, const char *path, int filetype) {
-
-    CSYNC_EXCLUDE_TYPE match = CSYNC_NOT_EXCLUDED;
-
-    match = csync_excluded_no_ctx( ctx->excludes, path, filetype );
-
-    return match;
 }
 
 // See http://support.microsoft.com/kb/74496 and
@@ -205,9 +243,14 @@ static CSYNC_EXCLUDE_TYPE _csync_excluded_common(c_strlist_t *excludes, const ch
     // distinguish files ending in '.' from files without an ending,
     // as '.' is a separator that is not stored internally, so let's
     // not allow to sync those to avoid file loss/ambiguities (#416)
-    if (blen > 1 && (bname[blen-1]== ' ' || bname[blen-1]== '.' )) {
-        match = CSYNC_FILE_EXCLUDE_INVALID_CHAR;
-        goto out;
+    if (blen > 1) {
+        if (bname[blen-1]== ' ') {
+            match = CSYNC_FILE_EXCLUDE_TRAILING_SPACE;
+            goto out;
+        } else if (bname[blen-1]== '.' ) {
+            match = CSYNC_FILE_EXCLUDE_INVALID_CHAR;
+            goto out;
+        }
     }
 
     if (csync_is_windows_reserved_word(bname)) {

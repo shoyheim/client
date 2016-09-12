@@ -35,7 +35,6 @@ class ShareDialog;
 class Application;
 class LogBrowser;
 class AccountState;
-typedef QSharedPointer<AccountState> AccountStatePtr;
 
 /**
  * @brief The ownCloudGui class
@@ -58,6 +57,7 @@ signals:
 
 public slots:
     void setupContextMenu();
+    void setupContextMenuIfVisible();
     void slotComputeOverallSyncStatus();
     void slotShowTrayMessage(const QString &title, const QString &msg);
     void slotShowOptionalTrayMessage(const QString &title, const QString &msg);
@@ -77,6 +77,7 @@ public slots:
     void slotHelp();
     void slotOpenPath(const QString& path);
     void slotAccountStateChanged();
+    void slotTrayMessageIfServerUnsupported(Account *account);
     void slotShowShareDialog(const QString &sharePath, const QString &localPath, bool resharingAllowed);
     void slotRemoveDestroyedShareDialogs();
 
@@ -84,8 +85,11 @@ private slots:
     void slotDisplayIdle();
     void slotLogin();
     void slotLogout();
+    void slotUnpauseAllFolders();
+    void slotPauseAllFolders();
 
 private:
+    void setPauseOnAllFoldersHelper(bool pause);
     void setupActions();
     void addAccountContextMenu(AccountStatePtr accountState, QMenu* menu, bool separateMenu);
 

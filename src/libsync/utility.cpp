@@ -35,6 +35,13 @@
 #else
 #include <QStandardPaths>
 #endif
+#if QT_VERSION >= QT_VERSION_CHECK(5, 2, 0)
+#include <QCollator>
+#endif
+#if QT_VERSION >= QT_VERSION_CHECK(5, 4, 0)
+#include <QSysInfo>
+#endif
+
 
 #ifdef Q_OS_UNIX
 #include <sys/statvfs.h>
@@ -113,6 +120,10 @@ QString Utility::octetsToString( qint64 octets )
     QString s;
     qreal value = octets;
 
+    // Whether we care about decimals: only for GB and only
+    // if it's less than 10 GB.
+    bool round = true;
+
     // do not display terra byte with the current units, as when
     // the MB, GB and KB units were made, there was no TB,
     // see the JEDEC standard
@@ -120,6 +131,7 @@ QString Utility::octetsToString( qint64 octets )
     if (octets >= gb) {
         s = QCoreApplication::translate("Utility", "%L1 GB");
         value /= gb;
+        round = false;
     } else if (octets >= mb) {
         s = QCoreApplication::translate("Utility", "%L1 MB");
         value /= mb;
@@ -130,7 +142,13 @@ QString Utility::octetsToString( qint64 octets )
         s = QCoreApplication::translate("Utility", "%L1 B");
     }
 
-    return (value > 9.95)  ? s.arg(qRound(value)) : s.arg(value, 0, 'g', 2);
+    if (value > 9.95)
+        round = true;
+
+    if (round)
+        return s.arg(qRound(value));
+
+    return s.arg(value, 0, 'g', 2);
 }
 
 // Qtified version of get_platforms() in csync_owncloud.c
@@ -161,7 +179,7 @@ QByteArray Utility::userAgentString()
 {
     QString re = QString::fromLatin1("Mozilla/5.0 (%1) mirall/%2")
             .arg(platform())
-            .arg(QLatin1String(MIRALL_STRINGIFY(MIRALL_VERSION)));
+            .arg(QLatin1String(MIRALL_VERSION_STRING));
 
     QLatin1String appName(APPLICATION_SHORTNAME);
 
@@ -236,18 +254,6 @@ QString Utility::toCSyncScheme(const QString &urlStr)
     return url.toString();
 }
 
-bool Utility::doesSetContainPrefix(const QSet<QString> &l, const QString &p) {
-
-    Q_FOREACH (const QString &setPath, l) {
-        //qDebug() << Q_FUNC_INFO << p << setPath << setPath.startsWith(p);
-        if (setPath.startsWith(p)) {
-            return true;
-        }
-    }
-    //qDebug() << "-> NOOOOO!!!" << p << l.count();
-    return false;
-}
-
 QString Utility::escape(const QString &in)
 {
 #if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
@@ -298,29 +304,43 @@ qint64 Utility::qDateTimeToTime_t(const QDateTime& t)
     return t.toMSecsSinceEpoch() / 1000;
 }
 
-QString Utility::durationToDescriptiveString(quint64 msecs)
-{
-    struct Period { const char *name; quint64 msec; };
+namespace {
+    struct Period
+    {
+        const char *name;
+        quint64 msec;
+
+        QString description(quint64 value) const
+        {
+            return QCoreApplication::translate(
+                    "Utility", name, 0, QCoreApplication::UnicodeUTF8,
+                    value);
+        }
+    };
+// QTBUG-3945 and issue #4855: QT_TRANSLATE_NOOP does not work with plural form because lupdate
+// limitation unless we fake more arguments
+// (it must be in the form ("context", "source", "comment", n)
+#undef QT_TRANSLATE_NOOP
+#define QT_TRANSLATE_NOOP(ctx, str, ...) str
     Q_DECL_CONSTEXPR Period periods[] = {
-        { QT_TRANSLATE_NOOP("Utility", "%Ln year(s)") , 365*24*3600*1000LL },
-        { QT_TRANSLATE_NOOP("Utility", "%Ln month(s)") , 30*24*3600*1000LL },
-        { QT_TRANSLATE_NOOP("Utility", "%Ln day(s)") , 24*3600*1000LL },
-        { QT_TRANSLATE_NOOP("Utility", "%Ln hour(s)") , 3600*1000LL },
-        { QT_TRANSLATE_NOOP("Utility", "%Ln minute(s)") , 60*1000LL },
-        { QT_TRANSLATE_NOOP("Utility", "%Ln second(s)") , 1000LL },
+        { QT_TRANSLATE_NOOP("Utility", "%n year(s)" , 0, _) , 365*24*3600*1000LL },
+        { QT_TRANSLATE_NOOP("Utility", "%n month(s)", 0, _) , 30*24*3600*1000LL },
+        { QT_TRANSLATE_NOOP("Utility", "%n day(s)", 0, _) , 24*3600*1000LL },
+        { QT_TRANSLATE_NOOP("Utility", "%n hour(s)", 0, _) , 3600*1000LL },
+        { QT_TRANSLATE_NOOP("Utility", "%n minute(s)", 0, _) , 60*1000LL },
+        { QT_TRANSLATE_NOOP("Utility", "%n second(s)", 0, _ ), 1000LL },
         { 0, 0 }
     };
+} // anonymous namespace
 
+QString Utility::durationToDescriptiveString2(quint64 msecs)
+{
     int p = 0;
-    while (periods[p].name && msecs < periods[p].msec) {
+    while (periods[p+1].name && msecs < periods[p].msec) {
         p++;
     }
 
-    if (!periods[p].name) {
-        return QCoreApplication::translate("Utility", "0 seconds");
-    }
-
-    auto firstPart = QCoreApplication::translate("Utility", periods[p].name, 0, QCoreApplication::UnicodeUTF8, int(msecs / periods[p].msec));
+    auto firstPart = periods[p].description(int(msecs / periods[p].msec));
 
     if (!periods[p+1].name) {
         return firstPart;
@@ -333,7 +353,18 @@ QString Utility::durationToDescriptiveString(quint64 msecs)
     }
 
     return QCoreApplication::translate("Utility", "%1 %2").arg(firstPart,
-            QCoreApplication::translate("Utility", periods[p+1].name, 0, QCoreApplication::UnicodeUTF8, secondPartNum));
+            periods[p+1].description(secondPartNum));
+}
+
+QString Utility::durationToDescriptiveString1(quint64 msecs)
+{
+    int p = 0;
+    while (periods[p+1].name && msecs < periods[p].msec) {
+        p++;
+    }
+
+    quint64 amount = qRound( double(msecs) / periods[p].msec );
+    return periods[p].description(amount);
 }
 
 QString Utility::fileNameForGuiUse(const QString& fName)
@@ -396,6 +427,25 @@ bool Utility::isBSD()
 #endif
 }
 
+QString Utility::platformName()
+{
+    QString re("Windows");
+
+#if QT_VERSION < QT_VERSION_CHECK(5, 4, 0)
+    if( isMac() ) {
+        re = QLatin1String("MacOSX");
+    } else if( isLinux() ) {
+        re = QLatin1String("Linux");
+    } else if( isBSD() ) {
+        re = QLatin1String("BSD");
+    } else if( isUnix() ) {
+        re = QLatin1String("Unix");
+    }
+#else
+    re = QSysInfo::prettyProductName();
+#endif
+    return re;
+}
 
 void Utility::crash()
 {
@@ -434,7 +484,7 @@ QByteArray Utility::versionOfInstalledBinary( const QString& command )
 
 QString Utility::timeAgoInWords(const QDateTime& dt, const QDateTime& from)
 {
-    QDateTime now = QDateTime::currentDateTime();
+    QDateTime now = QDateTime::currentDateTimeUtc();
 
     if( from.isValid() ) {
         now = from;
@@ -442,7 +492,7 @@ QString Utility::timeAgoInWords(const QDateTime& dt, const QDateTime& from)
 
     if( dt.daysTo(now)>0 ) {
         int dtn = dt.daysTo(now);
-        return QObject::tr("%1 day(s) ago", "", dtn).arg(dtn);
+        return QObject::tr("%n day(s) ago", "", dtn);
     } else {
         qint64 secs = dt.secsTo(now);
         if( secs < 0 ) {
@@ -450,7 +500,7 @@ QString Utility::timeAgoInWords(const QDateTime& dt, const QDateTime& from)
         }
         if( floor(secs / 3600.0) > 0 ) {
             int hours = floor(secs/3600.0);
-            return( QObject::tr("%1 hour(s) ago", "", hours).arg(hours));
+            return( QObject::tr("%n hour(s) ago", "", hours) );
         } else {
             int minutes = qRound(secs/60.0);
             if( minutes == 0 ) {
@@ -460,7 +510,7 @@ QString Utility::timeAgoInWords(const QDateTime& dt, const QDateTime& from)
                     return QObject::tr("Less than a minute ago");
                 }
             }
-            return( QObject::tr("%1 minute(s) ago", "", minutes).arg(minutes));
+            return( QObject::tr("%n minute(s) ago", "", minutes) );
         }
     }
     return QObject::tr("Some time ago");
@@ -520,6 +570,20 @@ QDateTime Utility::StopWatch::timeOfLap( const QString& lapName ) const
 quint64 Utility::StopWatch::durationOfLap( const QString& lapName ) const
 {
     return _lapTimes.value(lapName, 0);
+}
+
+void Utility::sortFilenames(QStringList& fileNames)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(5, 2, 0)
+    QCollator collator;
+    collator.setNumericMode(true);
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    qSort(fileNames.begin(), fileNames.end(), collator);
+#elif QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
+    fileNames.sort(Qt::CaseInsensitive);
+#else
+    fileNames.sort();
+#endif
 }
 
 } // namespace OCC

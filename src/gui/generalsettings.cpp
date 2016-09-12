@@ -109,7 +109,12 @@ void GeneralSettings::loadMiscSettings()
 
 void GeneralSettings::slotUpdateInfo()
 {
-    if (OCUpdater *updater = dynamic_cast<OCUpdater*>(Updater::instance())) {
+    OCUpdater *updater = dynamic_cast<OCUpdater*>(Updater::instance());
+    if (ConfigFile().skipUpdateCheck()) {
+        updater = 0; // don't show update info if updates are disabled
+    }
+
+    if (updater) {
         connect(updater, SIGNAL(downloadStateChanged()), SLOT(slotUpdateInfo()), Qt::UniqueConnection);
         connect(_ui->restartButton, SIGNAL(clicked()), updater, SLOT(slotStartInstaller()), Qt::UniqueConnection);
         connect(_ui->restartButton, SIGNAL(clicked()), qApp, SLOT(quit()), Qt::UniqueConnection);
@@ -154,14 +159,6 @@ void GeneralSettings::slotIgnoreFilesEditor()
     } else {
         ownCloudGui::raiseDialog(_ignoreEditor);
     }
-}
-
-void GeneralSettings::slotOpenAccountWizard()
-{
-    if (QSystemTrayIcon::isSystemTrayAvailable()) {
-        topLevelWidget()->close();
-    }
-    OwncloudSetupWizard::runWizard(qApp, SLOT(slotownCloudWizardDone(int)), 0);
 }
 
 } // namespace OCC

@@ -29,11 +29,13 @@ namespace OCC {
 class AccountState;
 class Account;
 
+typedef QExplicitlySharedDataPointer<AccountState> AccountStatePtr;
+
 /**
  * @brief Extra info about an ownCloud server account.
  * @ingroup gui
  */
-class AccountState : public QObject {
+class AccountState : public QObject, public QSharedData {
     Q_OBJECT
 public:
     enum State {
@@ -64,8 +66,20 @@ public:
     typedef ConnectionValidator::Status ConnectionStatus;
 
     /// Use the account as parent
-    AccountState(AccountPtr account);
+    explicit AccountState(AccountPtr account);
     ~AccountState();
+
+    /** Creates an account state from settings and an Account object.
+     *
+     * Use from AccountManager with a prepared QSettings object only.
+     */
+    static AccountState* loadFromSettings(AccountPtr account, QSettings& settings);
+
+    /** Writes account state information to settings.
+     *
+     * It does not write the Account data.
+     */
+    void writeToSettings(QSettings& settings);
 
     AccountPtr account() const;
 
@@ -113,6 +127,7 @@ private:
 
 signals:
     void stateChanged(int state);
+    void isConnectedChanged();
 
 protected Q_SLOTS:
     void slotConnectionValidatorResult(ConnectionValidator::Status status, const QStringList& errors);
@@ -133,6 +148,6 @@ private:
 }
 
 Q_DECLARE_METATYPE(OCC::AccountState*)
-Q_DECLARE_METATYPE(QSharedPointer<OCC::AccountState>)
+Q_DECLARE_METATYPE(OCC::AccountStatePtr)
 
 #endif //ACCOUNTINFO_H

@@ -21,20 +21,12 @@
 #include "progressdispatcher.h"
 #include "syncjournaldb.h"
 #include "clientproxy.h"
-#include "syncfilestatus.h"
 #include "networkjobs.h"
 
 #include <csync.h>
 
-#include <QDir>
-#include <QHash>
-#include <QSet>
 #include <QObject>
 #include <QStringList>
-
-#include <QDebug>
-#include <QTimer>
-#include <qelapsedtimer.h>
 
 class QThread;
 class QSettings;
@@ -43,6 +35,7 @@ namespace OCC {
 
 class SyncEngine;
 class AccountState;
+class SyncRunFileLog;
 
 /**
  * @brief The FolderDefinition class
@@ -87,7 +80,7 @@ class Folder : public QObject
     Q_OBJECT
 
 public:
-    Folder(const FolderDefinition& definition, QObject* parent = 0L);
+    Folder(const FolderDefinition& definition, AccountState* accountState, QObject* parent = 0L);
 
     ~Folder();
 
@@ -97,19 +90,18 @@ public:
     /**
      * The account the folder is configured on.
      */
-    void setAccountState( AccountState *account );
-    AccountState* accountState() const;
+    AccountState* accountState() const { return _accountState.data(); }
 
     /**
      * alias or nickname
      */
     QString alias() const;
-    QString aliasGui() const; // since 2.0 we don't want to show aliases anymore, show the path instead
+    QString shortGuiRemotePathOrAppName() const; // since 2.0 we don't want to show aliases anymore, show the path instead
 
     /**
-     * short path to display on the GUI  (native separators)
+     * short local path to display on the GUI  (native separators)
      */
-    QString shortGuiPath() const;
+    QString shortGuiLocalPath() const;
 
     /**
      * local folder path
@@ -133,8 +125,6 @@ public:
 
     /**
      * switch sync on or off
-     * If the sync is switched off, the startSync method is not going to
-     * be called.
      */
     void setSyncPaused( bool );
 
@@ -142,8 +132,6 @@ public:
 
     /**
      * Returns true when the folder may sync.
-     *
-     * !syncPaused() && accountState->isConnected().
      */
     bool canSync() const;
 
@@ -184,8 +172,7 @@ public:
 
      // Used by the Socket API
      SyncJournalDb *journalDb() { return &_journal; }
-
-     bool estimateState(QString fn, csync_ftw_type_e t, SyncFileStatus* s);
+     SyncEngine &syncEngine() { return *_engine; }
 
      RequestEtagJob *etagJob() { return _requestEtagJob; }
      qint64 msecSinceLastSync() const { return _timeSinceLastSyncDone.elapsed(); }
@@ -214,6 +201,14 @@ signals:
     void scheduleToSync(Folder*);
     void progressInfo(const ProgressInfo& progress);
     void newBigFolderDiscovered(const QString &); // A new folder bigger than the threshold was discovered
+    void syncPausedChanged(Folder*, bool paused);
+    void canSyncChanged();
+
+    /**
+     * Fires for each change inside this folder that wasn't caused
+     * by sync activity.
+     */
+    void watchedFileChangedExternally(const QString& path);
 
 public slots:
 
@@ -258,33 +253,40 @@ private slots:
     void slotFolderDiscovered(bool local, QString folderName);
     void slotTransmissionProgress(const ProgressInfo& pi);
     void slotItemCompleted(const SyncFileItem&, const PropagatorJob&);
-    void slotSyncItemDiscovered(const SyncFileItem & item);
 
     void slotRunEtagJob();
     void etagRetreived(const QString &);
     void etagRetreivedFromSyncEngine(const QString &);
 
-    void slotAboutToPropagate(SyncFileItemVector& );
     void slotThreadTreeWalkResult(const SyncFileItemVector& ); // after sync is done
 
     void slotEmitFinishedDelayed();
 
-    void watcherSlot(QString);
     void slotNewBigFolderDiscovered(const QString &);
 
-private:
-    bool init();
+    void slotLogPropagationStart();
 
+private:
     bool setIgnoredFiles();
 
     void bubbleUpSyncResult();
 
     void checkLocalPath();
 
-    void createGuiLog(const QString& filename, SyncFileStatus status, int count,
+    enum LogStatus {
+        LogStatusRemove,
+        LogStatusRename,
+        LogStatusMove,
+        LogStatusNew,
+        LogStatusError,
+        LogStatusConflict,
+        LogStatusUpdated
+    };
+
+    void createGuiLog(const QString& filename, LogStatus status, int count,
                        const QString& renameTarget = QString::null );
 
-    QPointer<AccountState> _accountState;
+    AccountStatePtr _accountState;
     FolderDefinition _definition;
 
     SyncResult _syncResult;
@@ -309,20 +311,11 @@ private:
     /// Reset when no follow-up is requested.
     int           _consecutiveFollowUpSyncs;
 
-    // SocketAPI: Cache files and folders that had errors so that they can
-    // get a red ERROR icon.
-    QSet<QString>   _stateLastSyncItemsWithErrorNew; // gets moved to _stateLastSyncItemsWithError at end of sync
-    QSet<QString>   _stateLastSyncItemsWithError;
-
-    // SocketAPI: A folder is tained if we got a file watcher notification
-    // for it. It's displayed as EVAL.
-    QSet<QString>   _stateTaintedFolders;
-
     SyncJournalDb _journal;
 
     ClientProxy   _clientProxy;
 
-    CSYNC *_csync_ctx;
+    QScopedPointer<SyncRunFileLog> _fileLog;
 };
 
 }

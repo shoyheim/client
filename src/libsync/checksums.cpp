@@ -108,10 +108,13 @@ bool uploadChecksumEnabled()
     return enabled;
 }
 
-bool downloadChecksumEnabled()
+QByteArray contentChecksumType()
 {
-    static bool enabled = qgetenv("OWNCLOUD_DISABLE_CHECKSUM_DOWNLOAD").isEmpty();
-    return enabled;
+    static QByteArray type = qgetenv("OWNCLOUD_CONTENT_CHECKSUM_TYPE");
+    if (!type.isNull()) { // can set to "" to disable checksumming
+        return type;
+    }
+    return "SHA1";
 }
 
 ComputeChecksum::ComputeChecksum(QObject* parent)

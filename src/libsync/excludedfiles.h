@@ -16,8 +16,8 @@
 #include "owncloudlib.h"
 
 #include <QObject>
-#include <QReadWriteLock>
-#include <QStringList>
+#include <QSet>
+#include <QString>
 
 extern "C" {
 #include "std/c_string.h"
@@ -36,6 +36,9 @@ class OWNCLOUDSYNC_EXPORT ExcludedFiles : public QObject
 public:
     static ExcludedFiles & instance();
 
+    ExcludedFiles(c_strlist_t** excludesPtr);
+    ~ExcludedFiles();
+
     /**
      * Adds a new path to a file containing exclude patterns.
      *
@@ -46,29 +49,29 @@ public:
     /**
      * Checks whether a file or directory should be excluded.
      *
-     * @param fullPath     the absolute path to the file
-     * @param relativePath path relative to the folder
-     *
-     * For directories, the paths must not contain a trailing /.
+     * @param filePath     the absolute path to the file
+     * @param basePath     folder path from which to apply exclude rules
      */
-    CSYNC_EXCLUDE_TYPE isExcluded(
-            const QString& fullPath,
-            const QString& relativePath,
+    bool isExcluded(
+            const QString& filePath,
+            const QString& basePath,
             bool excludeHidden) const;
+
+#ifdef WITH_UNIT_TESTING
+    void addExcludeExpr(const QString &expr);
+#endif
 
 public slots:
     /**
      * Reloads the exclude patterns from the registered paths.
      */
-    void reloadExcludes();
+    bool reloadExcludes();
 
 private:
-    ExcludedFiles();
-    ~ExcludedFiles();
-
-    c_strlist_t* _excludes;
-    QStringList _excludeFiles;
-    mutable QReadWriteLock _mutex;
+    // This is a pointer to the csync exclude list, its is owned by this class
+    // but the pointer can be in a csync_context so that it can itself also query the list.
+    c_strlist_t** _excludesPtr;
+    QSet<QString> _excludeFiles;
 };
 
 } // namespace OCC

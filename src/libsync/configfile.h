@@ -63,11 +63,17 @@ public:
     /* Set poll interval. Value in milliseconds has to be larger than 5000 */
     void setRemotePollInterval(int interval, const QString& connection = QString() );
 
+    /* Interval to check for new notifications */
+    quint64 notificationRefreshInterval(const QString& connection = QString()) const;
+
     /* Force sync interval, in milliseconds */
     quint64 forceSyncInterval(const QString &connection = QString()) const;
 
     bool monoIcons() const;
     void setMonoIcons(bool);
+
+    bool promptDeleteFiles() const;
+    void setPromptDeleteFiles(bool promptDeleteFiles);
 
     bool crashReporter() const;
     void setCrashReporter(bool enabled);
@@ -107,12 +113,6 @@ public:
 
     int timeout() const;
     quint64 chunkSize() const;
-
-    // send a checksum as a header along with the transmission or not.
-    // possible values:
-    // empty: no checksum calculated or expected.
-    // or "Adler32", "MD5", "SHA1"
-    QString transmissionChecksum() const;
 
     void saveGeometry(QWidget *w);
     void restoreGeometry(QWidget *w);

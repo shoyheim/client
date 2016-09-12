@@ -38,7 +38,10 @@ class OWNCLOUDSYNC_EXPORT SyncJournalDb : public QObject
 public:
     explicit SyncJournalDb(const QString& path, QObject *parent = 0);
     virtual ~SyncJournalDb();
-    SyncJournalFileRecord getFileRecord( const QString& filename );
+
+    // to verify that the record could be queried successfully check
+    // with SyncJournalFileRecord::isValid()
+    SyncJournalFileRecord getFileRecord(const QString& filename);
     bool setFileRecord( const SyncJournalFileRecord& record );
 
     /// Like setFileRecord, but preserves checksums
@@ -49,6 +52,8 @@ public:
     bool updateFileRecordChecksum(const QString& filename,
                                   const QByteArray& contentChecksum,
                                   const QByteArray& contentChecksumType);
+    bool updateLocalMetadata(const QString& filename,
+                             qint64 modtime, quint64 size, quint64 inode);
     bool exists();
     void walCheckpoint();
 
@@ -113,7 +118,7 @@ public:
         SelectiveSyncUndecidedList = 3
     };
     /* return the specified list from the database */
-    QStringList getSelectiveSyncList(SelectiveSyncListType type);
+    QStringList getSelectiveSyncList(SelectiveSyncListType type, bool *ok);
     /* Write the selective sync list (remove all other entries of that list */
     void setSelectiveSyncList(SelectiveSyncListType type, const QStringList &list);
 
@@ -151,6 +156,12 @@ public:
      */
     QByteArray getChecksumType(int checksumTypeId);
 
+    /**
+     * The data-fingerprint used to detect backup
+     */
+    void setDataFingerprint(const QByteArray &dataFingerprint);
+    QByteArray dataFingerprint();
+
 private:
     bool updateDatabaseStructure();
     bool updateMetadataTableStructure();
@@ -179,6 +190,7 @@ private:
     QScopedPointer<SqlQuery> _getFileRecordQuery;
     QScopedPointer<SqlQuery> _setFileRecordQuery;
     QScopedPointer<SqlQuery> _setFileRecordChecksumQuery;
+    QScopedPointer<SqlQuery> _setFileRecordLocalMetadataQuery;
     QScopedPointer<SqlQuery> _getDownloadInfoQuery;
     QScopedPointer<SqlQuery> _setDownloadInfoQuery;
     QScopedPointer<SqlQuery> _deleteDownloadInfoQuery;
@@ -193,6 +205,9 @@ private:
     QScopedPointer<SqlQuery> _getChecksumTypeIdQuery;
     QScopedPointer<SqlQuery> _getChecksumTypeQuery;
     QScopedPointer<SqlQuery> _insertChecksumTypeQuery;
+    QScopedPointer<SqlQuery> _getDataFingerprintQuery;
+    QScopedPointer<SqlQuery> _setDataFingerprintQuery1;
+    QScopedPointer<SqlQuery> _setDataFingerprintQuery2;
 
     /* This is the list of paths we called avoidReadFromDbOnNextSync on.
      * It means that they should not be written to the DB in any case since doing

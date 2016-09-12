@@ -111,6 +111,7 @@ public:
     QNetworkReply* headRequest(const QUrl &url);
     QNetworkReply* getRequest(const QString &relPath);
     QNetworkReply* getRequest(const QUrl &url);
+    QNetworkReply* deleteRequest( const QUrl &url);
     QNetworkReply* davRequest(const QByteArray &verb, const QString &relPath, QNetworkRequest req, QIODevice *data = 0);
     QNetworkReply* davRequest(const QByteArray &verb, const QUrl &url, QNetworkRequest req, QIODevice *data = 0);
 
@@ -132,7 +133,7 @@ public:
     // Usually when a user explicitly rejects a certificate we don't
     // ask again. After this call, a dialog will again be shown when
     // the next unknown certificate is encountered.
-    void resetSslCertErrorState();
+    void resetRejectedCertificates();
 
     // pluggable handler
     void setSslErrorHandler(AbstractSslErrorHandler *handler);
@@ -154,8 +155,20 @@ public:
     void setCapabilities(const QVariantMap &caps);
     const Capabilities &capabilities() const;
     void setServerVersion(const QString &version);
-    QString serverVersion();
-    int serverVersionInt();
+    QString serverVersion() const;
+    int serverVersionInt() const;
+
+    /** Whether the server is too old.
+     *
+     * Not supporting server versions is a gradual process. There's a hard
+     * compatibility limit (see ConnectionValidator) that forbids connecting
+     * to extremely old servers. And there's a weak "untested, not
+     * recommended, potentially dangerous" limit, that users might want
+     * to go beyond.
+     *
+     * This function returns true if the server is beyond the weak limit.
+     */
+    bool serverVersionUnsupported() const;
 
     // Fixed from 8.1 https://github.com/owncloud/client/issues/3730
     bool rootEtagChangesNotOnlySubFolderEtags();
@@ -179,7 +192,9 @@ signals:
     void proxyAuthenticationRequired(const QNetworkProxy&, QAuthenticator*);
 
     // e.g. when the approved SSL certificates changed
-    void wantsAccountSaved(AccountPtr acc);
+    void wantsAccountSaved(Account* acc);
+
+    void serverVersionChanged(Account* account, const QString& newVersion, const QString& oldVersion);
 
 protected Q_SLOTS:
     void slotHandleSslErrors(QNetworkReply*,QList<QSslError>);
@@ -199,9 +214,12 @@ private:
     QString _serverVersion;
     QScopedPointer<AbstractSslErrorHandler> _sslErrorHandler;
     QuotaInfo *_quotaInfo;
-    QNetworkAccessManager *_am;
-    AbstractCredentials* _credentials;
-    bool _treatSslErrorsAsFailure;
+    QSharedPointer<QNetworkAccessManager> _am;
+    QSharedPointer<AbstractCredentials> _credentials;
+
+    /// Certificates that were explicitly rejected by the user
+    QList<QSslCertificate> _rejectedCertificates;
+
     static QString _configFileName;
     QByteArray _pemCertificate; 
     QString _pemPrivateKey;  

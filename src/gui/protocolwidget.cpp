@@ -57,7 +57,16 @@ ProtocolWidget::ProtocolWidget(QWidget *parent) :
     header << tr("Action");
     header << tr("Size");
 
+    int timestampColumnExtra = 0;
+#ifdef Q_OS_WIN
+    timestampColumnExtra = 20; // font metrics are broken on Windows, see #4721
+#endif
+
     _ui->_treeWidget->setHeaderLabels( header );
+    int timestampColumnWidth =
+        _ui->_treeWidget->fontMetrics().width(timeString(QDateTime::currentDateTime()))
+        + timestampColumnExtra;
+    _ui->_treeWidget->setColumnWidth(0, timestampColumnWidth);
     _ui->_treeWidget->setColumnWidth(1, 180);
     _ui->_treeWidget->setColumnCount(5);
     _ui->_treeWidget->setRootIsDecorated(false);
@@ -79,6 +88,11 @@ ProtocolWidget::ProtocolWidget(QWidget *parent) :
     _issueItemView = new QTreeWidget(this);
     header.removeLast();
     _issueItemView->setHeaderLabels( header );
+    timestampColumnWidth =
+            ActivityItemDelegate::rowHeight() // icon
+            + _issueItemView->fontMetrics().width(timeString(QDateTime::currentDateTime()))
+            + timestampColumnExtra;
+    _issueItemView->setColumnWidth(0, timestampColumnWidth);
     _issueItemView->setColumnWidth(1, 180);
     _issueItemView->setColumnCount(4);
     _issueItemView->setRootIsDecorated(false);
@@ -90,27 +104,6 @@ ProtocolWidget::~ProtocolWidget()
 {
     delete _ui;
 }
-
-#if 0
-void ProtocolWidget::slotRetrySync()
-{
-    FolderMan *folderMan = FolderMan::instance();
-
-    Folder::Map folders = folderMan->map();
-
-    foreach( Folder *f, folders ) {
-        int num = f->slotWipeErrorBlacklist();
-        qDebug() << num << "entries were removed from"
-                 << f->alias() << "blacklist";
-
-        num = f->slotDiscardDownloadProgress();
-        qDebug() << num << "temporary files with partial downloads"
-                 << "were removed from" << f->alias();
-    }
-
-    folderMan->slotScheduleAllFolders();
-}
-#endif
 
 void ProtocolWidget::showEvent(QShowEvent *ev)
 {
@@ -128,17 +121,9 @@ void ProtocolWidget::hideEvent(QHideEvent *ev)
 
 void ProtocolWidget::cleanItems(const QString& folder)
 {
-    int itemCnt = _ui->_treeWidget->topLevelItemCount();
-
-    // Limit the number of items
-    while(itemCnt > 2000) {
-        delete _ui->_treeWidget->takeTopLevelItem(itemCnt - 1);
-        itemCnt--;
-    }
-
     // The issue list is a state, clear it and let the next sync fill it
     // with ignored files and propagation errors.
-    itemCnt = _issueItemView->topLevelItemCount();
+    int itemCnt = _issueItemView->topLevelItemCount();
     for( int cnt = itemCnt-1; cnt >=0 ; cnt-- ) {
         QTreeWidgetItem *item = _issueItemView->topLevelItem(cnt);
         QString itemFolder = item->data(2, Qt::UserRole).toString();
@@ -146,6 +131,8 @@ void ProtocolWidget::cleanItems(const QString& folder)
             delete item;
         }
     }
+    // update the tabtext
+    emit( issueItemCountUpdated(_issueItemView->topLevelItemCount()) );
 }
 
 QString ProtocolWidget::timeString(QDateTime dt, QLocale::FormatType format) const
@@ -186,7 +173,7 @@ QTreeWidgetItem* ProtocolWidget::createCompletedTreewidgetItem(const QString& fo
 
     columns << timeStr;
     columns << Utility::fileNameForGuiUse(item._originalFile);
-    columns << f->shortGuiPath();
+    columns << f->shortGuiLocalPath();
 
     // If the error string is set, it's prefered because it is a useful user message.
     QString message = item._errorString;
@@ -222,42 +209,13 @@ QTreeWidgetItem* ProtocolWidget::createCompletedTreewidgetItem(const QString& fo
     return twitem;
 }
 
-void ProtocolWidget::computeResyncButtonEnabled()
-{
-#if 0
-    FolderMan *folderMan = FolderMan::instance();
-    Folder::Map folders = folderMan->map();
-
-    int blacklist_cnt = 0;
-    int downloads_cnt = 0;
-    foreach( Folder *f, folders ) {
-        blacklist_cnt += f->errorBlackListEntryCount();
-        downloads_cnt += f->downloadInfoCount();
-    }
-
-    QString t = tr("Currently no files are ignored because of previous errors and no downloads are in progress.");
-    bool enabled = blacklist_cnt > 0 || downloads_cnt > 0;
-    if (enabled) {
-        t =   tr("%n files are ignored because of previous errors.\n", 0, blacklist_cnt)
-            + tr("%n files are partially downloaded.\n", 0, downloads_cnt)
-            + tr("Try to sync these again.");
-    }
-
-    _retrySyncBtn->setEnabled(enabled);
-    _retrySyncBtn->setToolTip(t);
-#endif
-
-}
-
 void ProtocolWidget::slotProgressInfo( const QString& folder, const ProgressInfo& progress )
 {
-    if( !progress.hasStarted() ) {
+    if( !progress.isUpdatingEstimates() ) {
         // The sync is restarting, clean the old items
         cleanItems(folder);
-        computeResyncButtonEnabled();
     } else if (progress.completedFiles() >= progress.totalFiles()) {
         //Sync completed
-        computeResyncButtonEnabled();
     }
 }
 
@@ -271,7 +229,14 @@ void ProtocolWidget::slotItemCompleted(const QString &folder, const SyncFileItem
     if(line) {
        if( item.hasErrorStatus() ) {
             _issueItemView->insertTopLevelItem(0, line);
+            emit issueItemCountUpdated(_issueItemView->topLevelItemCount());
         } else {
+            // Limit the number of items
+            int itemCnt = _ui->_treeWidget->topLevelItemCount();
+            while(itemCnt > 2000) {
+                delete _ui->_treeWidget->takeTopLevelItem(itemCnt - 1);
+                itemCnt--;
+            }
             _ui->_treeWidget->insertTopLevelItem(0, line);
         }
     }
