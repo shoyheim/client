@@ -183,6 +183,12 @@ QString SyncEngine::csyncErrorToString(CSYNC_STATUS err)
 
 }
 
+/**
+ * Check if the item is in the blacklist.
+ * If it should not be sync'ed because of the blacklist, update the item with the error instruction
+ * and proper error message, and return true.
+ * If the item is not in the blacklist, or the blacklist is stale, return false.
+ */
 bool SyncEngine::checkErrorBlacklisting( SyncFileItem &item )
 {
     if( !_journal ) {
@@ -213,6 +219,9 @@ bool SyncEngine::checkErrorBlacklisting( SyncFileItem &item )
             return false;
         } else if( item._modtime != entry._lastTryModtime ) {
             qDebug() << item._file << " is blacklisted, but has changed mtime!";
+            return false;
+        } else if( item._renameTarget != entry._renameTarget) {
+            qDebug() << item._file << " is blacklisted, but rename target changed from" << entry._renameTarget;
             return false;
         }
     } else if( item._direction == SyncFileItem::Down ) {
@@ -494,6 +503,8 @@ int SyncEngine::treewalkFile( TREE_WALK_FILE *file, bool remote )
             // Even if the mtime is different on the server, we always want to keep the mtime from
             // the file system in the DB, this is to avoid spurious upload on the next sync
             item->_modtime = file->other.modtime;
+            // same for the size
+            item->_size = file->other.size;
 
             // If the 'W' remote permission changed, update the local filesystem
             SyncJournalFileRecord prev = _journal->getFileRecord(item->_file);
@@ -523,6 +534,8 @@ int SyncEngine::treewalkFile( TREE_WALK_FILE *file, bool remote )
                 item->_isDirectory = isDirectory;
                 _syncItemMap.insert(key, item);
             }
+            item->_isDirectory = isDirectory;
+            emit syncItemDiscovered(*item);
             return re;
         }
         break;
@@ -1040,8 +1053,17 @@ void SyncEngine::checkForPermission()
                     (*it)->_status = SyncFileItem::NormalError;
                     (*it)->_errorString = tr("Not allowed because you don't have permission to add subfolders to that folder");
 
-                    for (SyncFileItemVector::iterator it_next = it + 1; it_next != _syncedItems.end() && (*it_next)->_file.startsWith(path); ++it_next) {
+                    for (SyncFileItemVector::iterator it_next = it + 1; it_next != _syncedItems.end() && (*it_next)->destination().startsWith(path); ++it_next) {
                         it = it_next;
+                        if ((*it)->_instruction == CSYNC_INSTRUCTION_RENAME) {
+                            // The file was most likely moved in this directory.
+                            // If the file was read only or could not be moved or removed, it should
+                            // be restored. Do that in the next sync by not considering as a rename
+                            // but delete and upload. It will then be restored if needed.
+                            _journal->avoidRenamesOnNextSync((*it)->_file);
+                            _anotherSyncNeeded = true;
+                            qDebug() << "Moving of " << (*it)->_file << " canceled because no permission to add parent folder";
+                        }
                         (*it)->_instruction = CSYNC_INSTRUCTION_ERROR;
                         (*it)->_status = SyncFileItem::NormalError;
                         (*it)->_errorString = tr("Not allowed because you don't have permission to add parent folder");
@@ -1170,15 +1192,18 @@ void SyncEngine::checkForPermission()
                     }
                 }
 
-#if 0 /* We don't like the idea of renaming behind user's back, as the user may be working with the files */
-
-                if (!sourceOK && !destinationOK) {
+#ifdef OWNCLOUD_RESTORE_RENAME /* We don't like the idea of renaming behind user's back, as the user may be working with the files */
+                if (!sourceOK && (!destinationOK || isRename)
+                        // (not for directory because that's more complicated with the contents that needs to be adjusted)
+                        && !(*it)->_isDirectory) {
                     // Both the source and the destination won't allow move.  Move back to the original
                     std::swap((*it)->_file, (*it)->_renameTarget);
                     (*it)->_direction = SyncFileItem::Down;
                     (*it)->_errorString = tr("Move not allowed, item restored");
                     (*it)->_isRestoration = true;
                     qDebug() << "checkForPermission: MOVING BACK" << (*it)->_file;
+                    // in case something does wrong, we will not do it next time
+                    _journal->avoidRenamesOnNextSync((*it)->_file);
                 } else
 #endif
                 if (!sourceOK || !destinationOK) {
