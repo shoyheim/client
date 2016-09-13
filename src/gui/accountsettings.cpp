@@ -229,7 +229,7 @@ void AccountSettings::slotCustomContextMenuRequested(const QPoint &pos)
     ac = menu->addAction(tr("Remove folder sync connection"));
     connect(ac, SIGNAL(triggered(bool)), this, SLOT(slotRemoveCurrentFolder()));
 
-    if(Utility::isWindows())
+    if(Utility::isWindows() && Utility::isAtLeastWindows10())
     {
         ac = menu->addAction(tr("Use as root in Explorer navigation pane"));
         connect(ac, SIGNAL(triggered(bool)), this, SLOT(slotUseCurrentFolderAsNavigationPaneRoot()));
@@ -375,7 +375,7 @@ void AccountSettings::slotRemoveCurrentFolder()
 
 void AccountSettings::slotUseCurrentFolderAsNavigationPaneRoot()
 {
-    if(!Utility::isWindows()){
+    if(!Utility::isWindows() || !Utility::isAtLeastWindows10()){
         return;
     }
 
