@@ -87,6 +87,7 @@ namespace Utility
 
     // convenience OS detection methods
     OWNCLOUDSYNC_EXPORT bool isWindows();
+    OWNCLOUDSYNC_EXPORT bool isAtLeastWindows10();
     OWNCLOUDSYNC_EXPORT bool isMac();
     OWNCLOUDSYNC_EXPORT bool isUnix();
     OWNCLOUDSYNC_EXPORT bool isLinux(); // use with care
