@@ -20,6 +20,11 @@ if (NOT DEFINED APPLICATION_SHORTNAME)
      set ( APPLICATION_SHORTNAME ${APPLICATION_NAME} )
 endif()
 
+# For usage in XML files we preprocess
+string(REPLACE "&" "&amp;" APPLICATION_NAME_XML_ESCAPED "${APPLICATION_NAME}")
+string(REPLACE "<" "&lt;" APPLICATION_NAME_XML_ESCAPED "${APPLICATION_NAME_XML_ESCAPED}")
+string(REPLACE ">" "&gt;" APPLICATION_NAME_XML_ESCAPED "${APPLICATION_NAME_XML_ESCAPED}")
+
 set(PACKAGE "${APPLICATION_SHORTNAME}-client")
 set( CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules )
 
@@ -30,7 +35,7 @@ endif()
 include(Warnings)
 
 include(${CMAKE_SOURCE_DIR}/VERSION.cmake)
-include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR} "${CMAKE_CURRENT_BINARY_DIR}/src/mirall/")
+include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR})
 
 # disable the crashreporter if libcrashreporter-qt is not available or we're building for ARM
 if( CMAKE_SYSTEM_PROCESSOR MATCHES "arm" OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/libcrashreporter-qt/CMakeLists.txt")
@@ -51,9 +56,7 @@ endif()
 
 include(GNUInstallDirs)
 include(DefineInstallationPaths)
-include(QtVersionAbstraction)
 
-setup_qt()
 
 include(GetGitRevisionDescription)
 
@@ -122,37 +125,22 @@ if(OWNCLOUD_5XX_NO_BLACKLIST)
     add_definitions(-DOWNCLOUD_5XX_NO_BLACKLIST=1)
 endif()
 
+# When this option is enabled, a rename that is not allowed will be renamed back
+# do the original as a restoration step.  Withut this option, the restoration will
+# re-download the file instead.
+# The default is off because we don't want to rename the files back behind the user's back
+# Added for IL issue #550
+option(OWNCLOUD_RESTORE_RENAME "OWNCLOUD_RESTORE_RENAME" OFF)
+if(OWNCLOUD_RESTORE_RENAME)
+    add_definitions(-DOWNCLOUD_RESTORE_RENAME=1)
+endif()
+
+
 if(APPLE)
   set( SOCKETAPI_TEAM_IDENTIFIER_PREFIX "" CACHE STRING "SocketApi prefix (including a following dot) that must match the codesign key's TeamIdentifier/Organizational Unit" )
 endif()
 
-#### find libs
-#find_package(Qt4 4.7.0 COMPONENTS QtCore QtGui QtXml QtNetwork QtTest QtWebkit REQUIRED )
-#if( UNIX AND NOT APPLE ) # Fdo notifications
-#    find_package(Qt4 4.7.0 COMPONENTS QtDBus REQUIRED )
-#endif()
-
-
-if(HAVE_QT5)
-  if (${Qt5Core_VERSION_MAJOR} EQUAL "5")
-    if (${Qt5Core_VERSION_MINOR} EQUAL "4" OR ${Qt5Core_VERSION_MINOR} GREATER 4)
-    else()
-      message(STATUS "If possible compile me with Qt 5.4 or higher.")
-    endif()
-  endif()
-else()
-  message(STATUS "If possible compile me with Qt 5.4 or higher.")
-endif()
-
 find_package(OpenSSL 1.0.0 REQUIRED)
-
-if(NOT TOKEN_AUTH_ONLY)
-    if (Qt5Core_DIR)
-    find_package(Qt5Keychain REQUIRED)
-    else()
-    find_package(QtKeychain REQUIRED)
-    endif()
-endif()
 
 if(APPLE)
   find_package(Sparkle)
