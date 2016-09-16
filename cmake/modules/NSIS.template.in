@@ -209,7 +209,7 @@ Function GetWindowsVersion
   StrCmp $R1 '6.0' lbl_winnt_vista
   StrCmp $R1 '6.1' lbl_winnt_7
   StrCmp $R1 '6.2' lbl_winnt_8
-  StrCmp $R1 '6.3' lbl_winnt_81
+  StrCmp $R1 '6.3' lbl_winnt_10
   StrCmp $R1 '6.4' lbl_winnt_10 ; the early Windows 10 tech previews used version 6.4
  
   StrCpy $R1 $R0 4
