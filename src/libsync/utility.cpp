@@ -394,11 +394,15 @@ bool Utility::isWindows()
 
 bool Utility::isAtLeastWindows10()
 {
+#ifdef Q_OS_WIN
 	if(QSysInfo::WindowsVersion > QSysInfo::WV_WINDOWS8_1){
 		return true;
 	}else{
 		return false;
 	}
+#else
+    return false;
+#endif
 }
 
 bool Utility::isMac()
