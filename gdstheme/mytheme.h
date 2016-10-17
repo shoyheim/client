@@ -94,8 +94,8 @@ public:
 
 	    re += tr("<p>Copyright ownCloud, Incorporated</p>");
 	    re += tr("<p>Distributed by %1 and licensed under the GNU General Public License (GPL) Version 2.0.<br/>"
-	             "Copyrights to the %2 logo belongs to %1.</p>")
-	            .arg(APPLICATION_VENDOR).arg(APPLICATION_NAME);
+	             "Copyrights to the %2 logo belongs to %3.</p>")
+	            .arg(APPLICATION_VENDOR).arg(APPLICATION_NAME).arg(APPLICATION_ICON_OWNER);
 
 	    re += gitSHA1();
 	    return re;

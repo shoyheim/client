@@ -110,12 +110,12 @@ QPixmap myTheme::wizardHeaderLogo() const
 
 QString myTheme::appName() const
 {
-    return QLatin1String("Green DataStorage");
+    return QLatin1String("Green Data Storage");
 }
 
 QString myTheme::appNameGUI() const
 {
-    return QLatin1String("Green DataStorage");
+    return QLatin1String("Green Data Storage");
 }
 
 
