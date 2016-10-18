@@ -765,7 +765,11 @@ void SyncEngine::startSync()
 
     qDebug() << "#### Discovery start #################################################### >>";
 
-    _thread.start();
+    // Usually the discovery runs in the background: We want to avoid
+    // stealing too much time from other processes that the user might
+    // be interacting with at the time.
+    _thread.start(QThread::LowPriority);
+
     _discoveryMainThread = new DiscoveryMainThread(account());
     _discoveryMainThread->setParent(this);
     connect(this, SIGNAL(finished(bool)), _discoveryMainThread, SLOT(deleteLater()));
@@ -852,6 +856,7 @@ void SyncEngine::slotDiscoveryJobFinished(int discoveryResult)
     bool walkOk = true;
     _seenFiles.clear();
     _temporarilyUnavailablePaths.clear();
+    _renamedFolders.clear();
 
     if( csync_walk_local_tree(_csync_ctx, &treewalkLocal, 0) < 0 ) {
         qDebug() << "Error in local treewalk.";

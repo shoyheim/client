@@ -695,6 +695,12 @@ void PropagateDirectory::finalize()
     bool ok = true;
     if (!_item->isEmpty() && _hasError == SyncFileItem::NoStatus) {
         if( !_item->_renameTarget.isEmpty() ) {
+            if(_item->_instruction == CSYNC_INSTRUCTION_RENAME
+                    && _item->_originalFile != _item->_renameTarget) {
+                // Remove the stale entries from the database.
+                _propagator->_journal->deleteFileRecord(_item->_originalFile, true);
+            }
+
             _item->_file = _item->_renameTarget;
         }
 
@@ -762,6 +768,7 @@ void CleanupPollsJob::slotPollFinished()
     Q_ASSERT(job);
     if (job->_item->_status == SyncFileItem::FatalError) {
         emit aborted(job->_item->_errorString);
+        deleteLater();
         return;
     } else if (job->_item->_status != SyncFileItem::Success) {
         qDebug() << "There was an error with file " << job->_item->_file << job->_item->_errorString;
@@ -771,6 +778,7 @@ void CleanupPollsJob::slotPollFinished()
             job->_item->_status = SyncFileItem::FatalError;
             job->_item->_errorString = tr("Error writing metadata to the database");
             emit aborted(job->_item->_errorString);
+            deleteLater();
             return;
         }
     }
