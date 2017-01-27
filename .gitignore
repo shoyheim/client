@@ -164,3 +164,4 @@ UpgradeLog*.htm
 # Microsoft Fakes
 FakesAssemblies/
 
+/shell_integration/windows/OCShellExtensions.VC.opendb
