@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -17,9 +18,9 @@
 #include <QFile>
 #include <QTextStream>
 #include <QScopedPointer>
+#include <QElapsedTimer>
 
 #include "syncfileitem.h"
-#include "utility.h"
 
 namespace OCC {
 class SyncFileItem;
@@ -32,20 +33,21 @@ class SyncRunFileLog
 {
 public:
     SyncRunFileLog();
-    void start( const QString& folderPath, const Utility::StopWatch& stopWatch );
-    void logItem( const SyncFileItem& item );
-    void close();
+    void start(const QString &folderPath);
+    void logItem(const SyncFileItem &item);
+    void logLap(const QString &name);
+    void finish();
 
 protected:
-
 private:
-    QString dateTimeStr( const QDateTime& dt );
-    QString instructionToStr( csync_instructions_e inst );
-    QString directionToStr( SyncFileItem::Direction dir );
+    QString dateTimeStr(const QDateTime &dt);
+    QString instructionToStr(csync_instructions_e inst);
+    QString directionToStr(SyncFileItem::Direction dir);
 
     QScopedPointer<QFile> _file;
     QTextStream _out;
-
+    QElapsedTimer _totalDuration;
+    QElapsedTimer _lapDuration;
 };
 }
 

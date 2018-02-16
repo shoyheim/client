@@ -4,7 +4,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -19,14 +20,16 @@
 #include "sharepermissions.h"
 #include "QProgressIndicator.h"
 #include <QDialog>
-#include <QVariantMap>
 #include <QSharedPointer>
 #include <QList>
+
+class QMenu;
+class QTableWidgetItem;
 
 namespace OCC {
 
 namespace Ui {
-class ShareLinkWidget;
+    class ShareLinkWidget;
 }
 
 class AbstractCredentials;
@@ -46,71 +49,91 @@ class ShareLinkWidget : public QWidget
 
 public:
     explicit ShareLinkWidget(AccountPtr account,
-                             const QString &sharePath,
-                             const QString &localPath,
-                             SharePermissions maxSharingPermissions,
-                             bool autoShare = false,
-                             QWidget *parent = 0);
+        const QString &sharePath,
+        const QString &localPath,
+        SharePermissions maxSharingPermissions,
+        QWidget *parent = 0);
     ~ShareLinkWidget();
     void getShares();
 
 private slots:
     void slotSharesFetched(const QList<QSharedPointer<Share>> &shares);
-    void slotCreateShareFetched(const QSharedPointer<LinkShare> share);
-    void slotCreateShareRequiresPassword(const QString& message);
-    void slotDeleteShareFetched();
-    void slotPasswordSet();
-    void slotExpireSet();
-    void slotExpireDateChanged(const QDate &date);
-    void slotCheckBoxShareLinkClicked();
+    void slotShareSelectionChanged();
+
+    void slotShareNameEntered();
+    void slotDeleteShareClicked();
     void slotCheckBoxPasswordClicked();
     void slotCheckBoxExpireClicked();
     void slotPasswordReturnPressed();
-    void slotPasswordChanged(const QString& newText);
-    void slotPushButtonCopyLinkPressed();
-    void slotCheckBoxEditingClicked();
-    void slotPublicUploadSet();
+    void slotPermissionsCheckboxClicked();
+    void slotExpireDateChanged(const QDate &date);
+    void slotPasswordChanged(const QString &newText);
+    void slotNameEdited(QTableWidgetItem *item);
+
+    void slotContextMenuButtonClicked();
+    void slotLinkContextMenuActionTriggered(QAction *action);
+
+    void slotDeleteShareFetched();
+    void slotCreateShareFetched(const QSharedPointer<LinkShare> &share);
+    void slotCreateShareRequiresPassword(const QString &message);
+    void slotPasswordSet();
+    void slotExpireSet();
+    void slotPermissionsSet();
 
     void slotServerError(int code, const QString &message);
     void slotPasswordSetError(int code, const QString &message);
 
 private:
-    void setShareCheckBoxTitle(bool haveShares);
-    void displayError(const QString& errMsg);
-    void setShareLink( const QString& url );
-    void resizeEvent(QResizeEvent *e);
-    void redrawElidedUrl();
-    void setPublicUpload(bool publicUpload);
+    void displayError(const QString &errMsg);
+
+    void setPassword(const QString &password);
+    void setExpireDate(const QDate &date);
+
+    void copyShareLink(const QUrl &url);
+    void emailShareLink(const QUrl &url);
+    void openShareLink(const QUrl &url);
+
+    /** Confirm with the user and then delete the share */
+    void confirmAndDeleteShare(const QSharedPointer<LinkShare> &share);
+
+    /** Retrieve a share's name, accounting for _namesSupported */
+    QString shareName(const LinkShare &share) const;
+
+    /**
+     * Retrieve the selected share, returning 0 if none.
+     */
+    QSharedPointer<LinkShare> selectedShare() const;
 
     Ui::ShareLinkWidget *_ui;
     AccountPtr _account;
     QString _sharePath;
     QString _localPath;
     QString _shareUrl;
-#if 0
-    QString _folderAlias;
-    int     _uploadFails;
-    QString _expectedSyncFile;
-#endif
 
-    bool _passwordJobRunning;
-    void setPassword(const QString &password);
-    void setExpireDate(const QDate &date);
-
-    QProgressIndicator *_pi_link;
+    QProgressIndicator *_pi_create;
     QProgressIndicator *_pi_password;
     QProgressIndicator *_pi_date;
     QProgressIndicator *_pi_editing;
 
     ShareManager *_manager;
-    QSharedPointer<LinkShare> _share;
 
-    SharePermissions _maxSharingPermissions;
     bool _isFile;
-    bool _autoShare;
     bool _passwordRequired;
-};
+    bool _expiryRequired;
+    bool _namesSupported;
 
+    // When a new share is created, we want to select it
+    // the next time getShares() finishes. This stores its id.
+    QString _newShareOverrideSelectionId;
+
+    QMenu *_linkContextMenu = nullptr;
+    QAction *_deleteLinkAction = nullptr;
+    QAction *_openLinkAction = nullptr;
+    QAction *_copyLinkAction = nullptr;
+    QAction *_copyDirectLinkAction = nullptr;
+    QAction *_emailLinkAction = nullptr;
+    QAction *_emailDirectLinkAction = nullptr;
+};
 }
 
 #endif // SHARELINKWIDGET_H

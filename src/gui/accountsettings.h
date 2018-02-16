@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -33,7 +34,7 @@ class QLabel;
 namespace OCC {
 
 namespace Ui {
-class AccountSettings;
+    class AccountSettings;
 }
 
 class FolderMan;
@@ -58,21 +59,25 @@ public:
 
 signals:
     void folderChanged();
-    void openFolderAlias( const QString& );
+    void openFolderAlias(const QString &);
+    void showIssuesList(const QString &folderAlias);
 
 public slots:
     void slotOpenOC();
-    void slotUpdateQuota( qint64,qint64 );
-    void slotAccountStateChanged(int state);
+    void slotUpdateQuota(qint64, qint64);
+    void slotAccountStateChanged();
 
-    AccountState* accountsState() { return _accountState; }
+    AccountState *accountsState() { return _accountState; }
 
 protected slots:
     void slotAddFolder();
     void slotEnableCurrentFolder();
-    void slotSyncCurrentFolderNow();
+    void slotScheduleCurrentFolder();
+    void slotScheduleCurrentFolderForceRemoteDiscovery();
+    void slotForceSyncCurrentFolder();
     void slotRemoveCurrentFolder();
-    void slotOpenCurrentFolder();
+    void slotOpenCurrentFolder(); // sync folder
+    void slotOpenCurrentLocalSubFolder(); // selected subfolder in sync folder
     void slotFolderWizardAccepted();
     void slotFolderWizardRejected();
     void slotDeleteAccount();
@@ -80,22 +85,25 @@ protected slots:
     void slotOpenAccountWizard();
     void slotAccountAdded(AccountState *);
     void refreshSelectiveSyncStatus();
-    void slotCustomContextMenuRequested(const QPoint&);
-    void slotFolderListClicked( const QModelIndex& indx );
+    void slotCustomContextMenuRequested(const QPoint &);
+    void slotFolderListClicked(const QModelIndex &indx);
     void doExpand();
     void slotLinkActivated(const QString &link);
     void slotUseCurrentFolderAsNavigationPaneRoot();
 
 private:
-    void showConnectionLabel(const QString& message,
-                             QStringList errors = QStringList());
-    bool event(QEvent*) Q_DECL_OVERRIDE;
+    void showConnectionLabel(const QString &message,
+        QStringList errors = QStringList());
+    bool event(QEvent *) Q_DECL_OVERRIDE;
     void createAccountToolbox();
+
+    /// Returns the alias of the selected folder, empty string if none
+    QString selectedFolderAlias() const;
 
     Ui::AccountSettings *ui;
 
     FolderStatusModel *_model;
-    QUrl   _OCUrl;
+    QUrl _OCUrl;
     bool _wasDisabledBefore;
     AccountState *_accountState;
     QuotaInfo _quotaInfo;

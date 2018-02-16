@@ -11,7 +11,7 @@ desktop client.
 .. note:: Build instructions are subject to change as development proceeds.
   Please check the version for which you want to build.
 
-These instructions are updated to work with version 2.2 of the ownCloud Client.
+These instructions are updated to work with version |version| of the ownCloud Client.
 
 Getting Source Code
 -------------------
@@ -30,10 +30,10 @@ you the exact sources from which the binary packages are built. These are
 hosted on the `ownCloud repository from OBS`_. Go to the `Index of 
 repositories`_ to see all the Linux client repos.
 
-1. At the `bottom of the page for each distribution 
+1. The source RPMs for CentOS, RHEL, Fedora, SLES, and openSUSE are at the `bottom of the page for each distribution 
    <https://software.opensuse.org/download/package?project=isv:ownCloud:desktop&
-   package=owncloud-client>`_ is a "Grab binary packages directly" section. 
-   These contain source RPMs for CentOS, RHEL, Fedora, SLES, and openSUSE. 
+   package=owncloud-client>`
+   the sources for DEB and Ubuntu based distributions are at e.g. http://download.opensuse.org/repositories/isv:/ownCloud:/desktop/Ubuntu_16.04/
    
    To get the .deb source packages add the source 
    repo for your Debian or Ubuntu version, like this example for Debian 8 
@@ -42,7 +42,8 @@ repositories`_ to see all the Linux client repos.
     echo 'deb-src 
     http://download.opensuse.org/repositories/isv:/ownCloud:/desktop/Debian_8.0/ /' >> /etc/apt/sources.list.d/owncloud-client.list
 
-2. Install the dependencies using the following commands for your specific Linux distribution:
+2. Install the dependencies using the following commands for your specific Linux 
+distribution. Make sure the repositories for source packages are enabled.
   
    * Debian/Ubuntu: ``apt-get update; apt-get build-dep owncloud-client``
    * openSUSE/SLES: ``zypper ref; zypper si -d owncloud-client``
@@ -53,7 +54,7 @@ repositories`_ to see all the Linux client repos.
 Mac OS X
 --------
 
-In additon to needing XCode (along with the command line tools), developing in
+In addition to needing XCode (along with the command line tools), developing in
 the Mac OS X environment requires extra dependencies.  You can install these
 dependencies through MacPorts_ or Homebrew_.  These dependencies are required
 only on the build machine, because non-standard libs are deployed in the app
@@ -65,29 +66,43 @@ recipes.
 
 To set up your build environment for development using HomeBrew_:
 
-1. Add the ownCloud repository using the following command::
+1. Install Xcode
+2. Install Xcode command line tools::
+    xcode-select --install
+
+3. Install homebrew::
+    /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+
+4. Add the ownCloud repository using the following command::
 
     brew tap owncloud/owncloud
 
-2. Install any missing dependencies::
+5. Install a Qt5 version with qtwebkit support::
+
+    brew install qt5 --with-qtwebkit
+
+6. Install any missing dependencies::
 
     brew install $(brew deps owncloud-client)
 
-3. Add Qt from brew to the path::
+7. Add Qt from brew to the path::
 
-    export PATH=/usr/local/Cellar/qt5/5.x.y/bin/qmake
+    export PATH=/usr/local/Cellar/qt5/5.x.y/bin:$PATH
 
-   Where ``x.z`` is the current version of Qt 5 that brew has installed
+   Where ``x.y`` is the current version of Qt 5 that brew has installed
    on your machine.
+8. Install qtkeychain from here:  git clone https://github.com/frankosterfeld/qtkeychain.git
+   make sure you make the same install prefix as later while building the client e.g.  -            
+   ``DCMAKE_INSTALL_PREFIX=/Path/to/client-install``
 
-5. For compilation of the client, follow the :ref:`generic-build-instructions`.
+9. For compilation of the client, follow the :ref:`generic-build-instructions`.
 
-6. Install the Packages_ package creation tool.
+10. Install the Packages_ package creation tool.
 
-7. In the build directory, run ``admin/osx/create_mac.sh <build_dir>
-   <install_dir>``. If you have a developer signing certificate, you can specify
-   its Common Name as a third parameter (use quotes) to have the package
-   signed automatically.
+11. In the build directory, run ``admin/osx/create_mac.sh <build_dir> <install_dir>``. 
+    If you have a developer signing certificate, you can specify
+    its Common Name as a third parameter (use quotes) to have the package
+    signed automatically.
 
    .. note:: Contrary to earlier versions, ownCloud 1.7 and later are packaged
              as a ``pkg`` installer. Do not call "make package" at any time when
@@ -95,7 +110,7 @@ To set up your build environment for development using HomeBrew_:
              work correctly.
 
 Windows Development Build
------------------------
+-------------------------
 
 If you want to test some changes and deploy them locally, you can build natively
 on Windows using MinGW. If you want to generate an installer for deployment, please
@@ -195,7 +210,7 @@ In order to make setup simple, you can use the provided Dockerfile to build your
                -in ${unsigned_file} \
                -out ${installer_file}
 
-   for ``-in``, use the URL to the time stamping server provided by your CA along with the Authenticode certificate. Alternatively,
+   For ``-in``, use the URL to the time stamping server provided by your CA along with the Authenticode certificate. Alternatively,
    you may use the official Microsoft ``signtool`` utility on Microsoft Windows.
 
    If you're familiar with docker, you can use the version of ``osslsigncode`` that is part of the docker image.
@@ -225,15 +240,19 @@ To build the most up-to-date version of the client:
 
 3. Configure the client build::
 
-    cmake -DCMAKE_BUILD_TYPE="Debug" ..
-
+     cmake -DCMAKE_BUILD_TYPE="Debug" ..
+    
    .. note:: You must use absolute paths for the ``include`` and ``library``
             directories.
 
    .. note:: On Mac OS X, you need to specify ``-DCMAKE_INSTALL_PREFIX=target``,
             where ``target`` is a private location, i.e. in parallel to your build
             dir by specifying ``../install``.
-
+            
+   .. note:: qtkeychain must be compiled with the same prefix e.g ``CMAKE_INSTALL_PREFIX=/Users/path/to/client/install/ .``
+   
+   .. note:: Example:: ``cmake -DCMAKE_PREFIX_PATH=/usr/local/opt/qt5 -DCMAKE_INSTALL_PREFIX=/Users/path/to/client/install/  -DNO_SHIBBOLETH=1``
+   
 4. Call ``make``.
 
    The owncloud binary will appear in the ``bin`` directory.

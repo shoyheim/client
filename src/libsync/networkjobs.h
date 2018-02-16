@@ -19,6 +19,7 @@
 #include "abstractnetworkjob.h"
 
 class QUrl;
+class QJsonObject;
 
 namespace OCC {
 
@@ -26,14 +27,15 @@ namespace OCC {
  * @brief The EntityExistsJob class
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT EntityExistsJob : public AbstractNetworkJob {
+class OWNCLOUDSYNC_EXPORT EntityExistsJob : public AbstractNetworkJob
+{
     Q_OBJECT
 public:
-    explicit EntityExistsJob(AccountPtr account, const QString &path, QObject* parent = 0);
+    explicit EntityExistsJob(AccountPtr account, const QString &path, QObject *parent = 0);
     void start() Q_DECL_OVERRIDE;
 
 signals:
-    void exists(QNetworkReply*);
+    void exists(QNetworkReply *);
 
 private slots:
     virtual bool finished() Q_DECL_OVERRIDE;
@@ -43,25 +45,27 @@ private slots:
  * @brief The LsColJob class
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT LsColXMLParser : public QObject {
+class OWNCLOUDSYNC_EXPORT LsColXMLParser : public QObject
+{
     Q_OBJECT
 public:
     explicit LsColXMLParser();
 
-    bool parse(const QByteArray &xml, QHash<QString, qint64> *sizes, const QString& expectedPath);
+    bool parse(const QByteArray &xml, QHash<QString, qint64> *sizes, const QString &expectedPath);
 
 signals:
     void directoryListingSubfolders(const QStringList &items);
-    void directoryListingIterated(const QString &name, const QMap<QString,QString> &properties);
+    void directoryListingIterated(const QString &name, const QMap<QString, QString> &properties);
     void finishedWithError(QNetworkReply *reply);
     void finishedWithoutError();
-
 };
 
-class OWNCLOUDSYNC_EXPORT LsColJob : public AbstractNetworkJob {
+class OWNCLOUDSYNC_EXPORT LsColJob : public AbstractNetworkJob
+{
     Q_OBJECT
 public:
     explicit LsColJob(AccountPtr account, const QString &path, QObject *parent = 0);
+    explicit LsColJob(AccountPtr account, const QUrl &url, QObject *parent = 0);
     void start() Q_DECL_OVERRIDE;
     QHash<QString, qint64> _sizes;
 
@@ -78,7 +82,7 @@ public:
 
 signals:
     void directoryListingSubfolders(const QStringList &items);
-    void directoryListingIterated(const QString &name, const QMap<QString,QString> &properties);
+    void directoryListingIterated(const QString &name, const QMap<QString, QString> &properties);
     void finishedWithError(QNetworkReply *reply);
     void finishedWithoutError();
 
@@ -87,6 +91,7 @@ private slots:
 
 private:
     QList<QByteArray> _properties;
+    QUrl _url; // Used instead of path() if the url is specified in the constructor
 };
 
 /**
@@ -99,7 +104,8 @@ private:
  *
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT PropfindJob : public AbstractNetworkJob {
+class OWNCLOUDSYNC_EXPORT PropfindJob : public AbstractNetworkJob
+{
     Q_OBJECT
 public:
     explicit PropfindJob(AccountPtr account, const QString &path, QObject *parent = 0);
@@ -127,6 +133,38 @@ private:
     QList<QByteArray> _properties;
 };
 
+#ifndef TOKEN_AUTH_ONLY
+/**
+ * @brief The AvatarJob class
+ *
+ * Retrieves the account users avatar from the server using a GET request.
+ *
+ * If the server does not have the avatar, the result Pixmap is empty.
+ *
+ * @ingroup libsync
+ */
+class OWNCLOUDSYNC_EXPORT AvatarJob : public AbstractNetworkJob
+{
+    Q_OBJECT
+public:
+    explicit AvatarJob(AccountPtr account, QObject *parent = 0);
+    void start() Q_DECL_OVERRIDE;
+
+signals:
+    /**
+     * @brief avatarPixmap - returns either a valid pixmap or not.
+     */
+
+    void avatarPixmap(const QImage &);
+
+private slots:
+    virtual bool finished() Q_DECL_OVERRIDE;
+
+private:
+    QUrl _avatarUrl;
+};
+#endif
+
 /**
  * @brief Send a Proppatch request
  *
@@ -136,7 +174,8 @@ private:
  *
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT ProppatchJob : public AbstractNetworkJob {
+class OWNCLOUDSYNC_EXPORT ProppatchJob : public AbstractNetworkJob
+{
     Q_OBJECT
 public:
     explicit ProppatchJob(AccountPtr account, const QString &path, QObject *parent = 0);
@@ -168,10 +207,16 @@ private:
  * @brief The MkColJob class
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT MkColJob : public AbstractNetworkJob {
+class OWNCLOUDSYNC_EXPORT MkColJob : public AbstractNetworkJob
+{
     Q_OBJECT
+    QUrl _url; // Only used if the constructor taking a url is taken.
+    QMap<QByteArray, QByteArray> _extraHeaders;
+
 public:
     explicit MkColJob(AccountPtr account, const QString &path, QObject *parent = 0);
+    explicit MkColJob(AccountPtr account, const QUrl &url,
+        const QMap<QByteArray, QByteArray> &extraHeaders, QObject *parent = 0);
     void start() Q_DECL_OVERRIDE;
 
 signals:
@@ -185,36 +230,65 @@ private slots:
  * @brief The CheckServerJob class
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT CheckServerJob : public AbstractNetworkJob {
+class OWNCLOUDSYNC_EXPORT CheckServerJob : public AbstractNetworkJob
+{
     Q_OBJECT
 public:
     explicit CheckServerJob(AccountPtr account, QObject *parent = 0);
     void start() Q_DECL_OVERRIDE;
 
-    static QString version(const QVariantMap &info);
-    static QString versionString(const QVariantMap &info);
-    static bool installed(const QVariantMap &info);
+    static QString version(const QJsonObject &info);
+    static QString versionString(const QJsonObject &info);
+    static bool installed(const QJsonObject &info);
 
 signals:
-    void instanceFound(const QUrl&url, const QVariantMap &info);
-    void instanceNotFound(QNetworkReply *reply);
-    void timeout(const QUrl&url);
+    /** Emitted when a status.php was successfully read.
+     *
+     * \a url see _serverStatusUrl (does not include "/status.php")
+     * \a info The status.php reply information
+     */
+    void instanceFound(const QUrl &url, const QJsonObject &info);
 
+    /** Emitted on invalid status.php reply.
+     *
+     * \a reply is never null
+     */
+    void instanceNotFound(QNetworkReply *reply);
+
+    /** A timeout occurred.
+     *
+     * \a url The specific url where the timeout happened.
+     */
+    void timeout(const QUrl &url);
+
+private:
+    bool finished() Q_DECL_OVERRIDE;
+    void onTimedOut() Q_DECL_OVERRIDE;
 private slots:
-    virtual bool finished() Q_DECL_OVERRIDE;
-    virtual void slotTimeout() Q_DECL_OVERRIDE;
     virtual void metaDataChangedSlot();
     virtual void encryptedSlot();
+    void slotRedirected(QNetworkReply *reply, const QUrl &targetUrl, int redirectCount);
 
 private:
     bool _subdirFallback;
+
+    /** The permanent-redirect adjusted account url.
+     *
+     * Note that temporary redirects or a permanent redirect behind a temporary
+     * one do not affect this url.
+     */
+    QUrl _serverUrl;
+
+    /** Keep track of how many permanent redirect were applied. */
+    int _permanentRedirects;
 };
 
 
 /**
  * @brief The RequestEtagJob class
  */
-class OWNCLOUDSYNC_EXPORT RequestEtagJob : public AbstractNetworkJob {
+class OWNCLOUDSYNC_EXPORT RequestEtagJob : public AbstractNetworkJob
+{
     Q_OBJECT
 public:
     explicit RequestEtagJob(AccountPtr account, const QString &path, QObject *parent = 0);
@@ -236,13 +310,14 @@ private slots:
  * To be used like this:
  * \code
  * _job = new JsonApiJob(account, QLatin1String("ocs/v1.php/foo/bar"), this);
- * connect(job, SIGNAL(jsonReceived(QVariantMap)), ...)
- * The received QVariantMap is empty in case of error or otherwise is a map as parsed by QtJson
+ * connect(job, SIGNAL(jsonReceived(QJsonDocument)), ...)
+ * The received QVariantMap is null in case of error
  * \encode
  *
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT JsonApiJob : public AbstractNetworkJob {
+class OWNCLOUDSYNC_EXPORT JsonApiJob : public AbstractNetworkJob
+{
     Q_OBJECT
 public:
     explicit JsonApiJob(const AccountPtr &account, const QString &path, QObject *parent = 0);
@@ -257,23 +332,75 @@ public:
      *
      * This function needs to be called before start() obviously.
      */
-    void addQueryParams(QList< QPair<QString,QString> > params);
+    void addQueryParams(QList<QPair<QString, QString>> params);
 
 public slots:
     void start() Q_DECL_OVERRIDE;
+
 protected:
     bool finished() Q_DECL_OVERRIDE;
 signals:
 
     /**
      * @brief jsonReceived - signal to report the json answer from ocs
-     * @param json - the raw json string
+     * @param json - the parsed json document
      * @param statusCode - the OCS status code: 100 (!) for success
      */
-    void jsonReceived(const QVariantMap &json, int statusCode);
+    void jsonReceived(const QJsonDocument &json, int statusCode);
 
 private:
-    QList< QPair<QString,QString> > _additionalParams;
+    QList<QPair<QString, QString>> _additionalParams;
+};
+
+/**
+ * @brief Checks with auth type to use for a server
+ * @ingroup libsync
+ */
+class OWNCLOUDSYNC_EXPORT DetermineAuthTypeJob : public QObject
+{
+    Q_OBJECT
+public:
+    enum AuthType {
+        Basic, // also the catch-all fallback for backwards compatibility reasons
+        OAuth,
+        Shibboleth
+    };
+
+    explicit DetermineAuthTypeJob(AccountPtr account, QObject *parent = 0);
+    void start();
+signals:
+    void authType(AuthType);
+
+private:
+    void checkBothDone();
+
+    AccountPtr _account;
+    AuthType _resultGet = Basic;
+    AuthType _resultPropfind = Basic;
+    bool _getDone = false;
+    bool _propfindDone = false;
+};
+
+/**
+ * @brief A basic job around a network request without extra funtionality
+ * @ingroup libsync
+ *
+ * Primarily adds timeout and redirection handling.
+ */
+class OWNCLOUDSYNC_EXPORT SimpleNetworkJob : public AbstractNetworkJob
+{
+    Q_OBJECT
+public:
+    explicit SimpleNetworkJob(AccountPtr account, QObject *parent = 0);
+
+    QNetworkReply *startRequest(const QByteArray &verb, const QUrl &url,
+        QNetworkRequest req = QNetworkRequest(),
+        QIODevice *requestBody = 0);
+
+signals:
+    void finishedSignal(QNetworkReply *reply);
+private slots:
+    bool finished() Q_DECL_OVERRIDE;
 };
 
 } // namespace OCC

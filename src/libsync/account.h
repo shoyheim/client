@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -25,7 +26,12 @@
 #include <QSslCipher>
 #include <QSslError>
 #include <QSharedPointer>
-#include "utility.h"
+
+#ifndef TOKEN_AUTH_ONLY
+#include <QPixmap>
+#endif
+
+#include "common/utility.h"
 #include <memory>
 #include "capabilities.h"
 
@@ -41,39 +47,52 @@ class Account;
 typedef QSharedPointer<Account> AccountPtr;
 class QuotaInfo;
 class AccessManager;
+class SimpleNetworkJob;
 
 
 /**
  * @brief Reimplement this to handle SSL errors from libsync
  * @ingroup libsync
  */
-class AbstractSslErrorHandler {
+class AbstractSslErrorHandler
+{
 public:
     virtual ~AbstractSslErrorHandler() {}
-    virtual bool handleErrors(QList<QSslError>, const QSslConfiguration &conf, QList<QSslCertificate>*, AccountPtr) = 0;
+    virtual bool handleErrors(QList<QSslError>, const QSslConfiguration &conf, QList<QSslCertificate> *, AccountPtr) = 0;
 };
 
 /**
  * @brief The Account class represents an account on an ownCloud Server
  * @ingroup libsync
+ *
+ * The Account has a name and url. It also has information about credentials,
+ * SSL errors and certificates.
  */
-class OWNCLOUDSYNC_EXPORT Account : public QObject {
+class OWNCLOUDSYNC_EXPORT Account : public QObject
+{
     Q_OBJECT
 public:
-    /**
-     * @brief The possibly themed dav path for the account. It has
-     *        a trailing slash.
-     * @returns the (themeable) dav path for the account.
-     */
-    QString davPath() const;
-    void setDavPath(const QString&s) { _davPath = s; }
-    void setNonShib(bool nonShib);
-
     static AccountPtr create();
     ~Account();
 
-    void setSharedThis(AccountPtr sharedThis);
     AccountPtr sharedFromThis();
+
+    /**
+     * The user that can be used in dav url.
+     *
+     * This can very well be different frome the login user that's
+     * stored in credentials()->user().
+     */
+    QString davUser() const;
+    void setDavUser(const QString &newDavUser);
+
+    QString davDisplayName() const;
+    void setDavDisplayName(const QString &newDisplayName);
+
+#ifndef TOKEN_AUTH_ONLY
+    QImage avatar() const;
+    void setAvatar(const QImage &img);
+#endif
 
     /// The name of the account as shown in the toolbar
     QString displayName() const;
@@ -81,39 +100,55 @@ public:
     /// The internal id of the account.
     QString id() const;
 
-    /**
-     * @brief Checks the Account instance is different from @param other
-     *
-     * @returns true, if credentials or url have changed, false otherwise
-     */
-    bool changed(AccountPtr other, bool ignoreUrlProtocol) const;
-
-    /** Holds the accounts credentials */
-    AbstractCredentials* credentials() const;
-    void setCredentials(AbstractCredentials *cred);
-
     /** Server url of the account */
     void setUrl(const QUrl &url);
     QUrl url() const { return _url; }
 
+    /// Adjusts _userVisibleUrl once the host to use is discovered.
+    void setUserVisibleHost(const QString &host);
+
+    /**
+     * @brief The possibly themed dav path for the account. It has
+     *        a trailing slash.
+     * @returns the (themeable) dav path for the account.
+     */
+    QString davPath() const;
+    void setDavPath(const QString &s) { _davPath = s; }
+    void setNonShib(bool nonShib);
+
     /** Returns webdav entry URL, based on url() */
     QUrl davUrl() const;
 
-    /** set and retrieve the migration flag: if an account of a branded
-     *  client was migrated from a former ownCloud Account, this is true
+    /** Returns the legacy permalink url for a file.
+     *
+     * This uses the old way of manually building the url. New code should
+     * use the "privatelink" property accessible via PROPFIND.
      */
-    void setMigrated(bool mig);
-    bool wasMigrated();
+    QUrl deprecatedPrivateLinkUrl(const QByteArray &numericFileId) const;
 
-    QList<QNetworkCookie> lastAuthCookies() const;
+    /** Holds the accounts credentials */
+    AbstractCredentials *credentials() const;
+    void setCredentials(AbstractCredentials *cred);
 
-    QNetworkReply* headRequest(const QString &relPath);
-    QNetworkReply* headRequest(const QUrl &url);
-    QNetworkReply* getRequest(const QString &relPath);
-    QNetworkReply* getRequest(const QUrl &url);
-    QNetworkReply* deleteRequest( const QUrl &url);
-    QNetworkReply* davRequest(const QByteArray &verb, const QString &relPath, QNetworkRequest req, QIODevice *data = 0);
-    QNetworkReply* davRequest(const QByteArray &verb, const QUrl &url, QNetworkRequest req, QIODevice *data = 0);
+    /** Create a network request on the account's QNAM.
+     *
+     * Network requests in AbstractNetworkJobs are created through
+     * this function. Other places should prefer to use jobs or
+     * sendRequest().
+     */
+    QNetworkReply *sendRawRequest(const QByteArray &verb,
+        const QUrl &url,
+        QNetworkRequest req = QNetworkRequest(),
+        QIODevice *data = 0);
+
+    /** Create and start network job for a simple one-off request.
+     *
+     * More complicated requests typically create their own job types.
+     */
+    SimpleNetworkJob *sendRequest(const QByteArray &verb,
+        const QUrl &url,
+        QNetworkRequest req = QNetworkRequest(),
+        QIODevice *data = 0);
 
     /** The ssl configuration during the first connection */
     QSslConfiguration getOrCreateSslConfig();
@@ -138,25 +173,34 @@ public:
     // pluggable handler
     void setSslErrorHandler(AbstractSslErrorHandler *handler);
 
-    // static helper function
-    static QUrl concatUrlPath(const QUrl &url, const QString &concatPath,
-                              const QList< QPair<QString, QString> > &queryItems = (QList<QPair<QString, QString>>()));
+    // To be called by credentials only, for storing username and the like
+    QVariant credentialSetting(const QString &key) const;
+    void setCredentialSetting(const QString &key, const QVariant &value);
 
-    /**  Returns a new settings pre-set in a specific group.  The Settings will be created
-         with the given parent. If no parent is specified, the caller must destroy the settings */
-    static std::unique_ptr<QSettings> settingsWithGroup(const QString& group, QObject* parent = 0);
-
-    // to be called by credentials only
-    QVariant credentialSetting(const QString& key) const;
-    void setCredentialSetting(const QString& key, const QVariant &value);
-
+    /** Assign a client certificate */
     void setCertificate(const QByteArray certficate = QByteArray(), const QString privateKey = QString());
 
-    void setCapabilities(const QVariantMap &caps);
+    /** Access the server capabilities */
     const Capabilities &capabilities() const;
-    void setServerVersion(const QString &version);
+    void setCapabilities(const QVariantMap &caps);
+
+    /** Access the server version
+     *
+     * For servers >= 10.0.0, this can be the empty string until capabilities
+     * have been received.
+     */
     QString serverVersion() const;
+
+    /** Server version for easy comparison.
+     *
+     * Example: serverVersionInt() >= makeServerVersion(11, 2, 3)
+     *
+     * Will be 0 if the version is not available yet.
+     */
     int serverVersionInt() const;
+
+    static int makeServerVersion(int majorVersion, int minorVersion, int patchVersion);
+    void setServerVersion(const QString &version);
 
     /** Whether the server is too old.
      *
@@ -171,43 +215,76 @@ public:
     bool serverVersionUnsupported() const;
 
     // Fixed from 8.1 https://github.com/owncloud/client/issues/3730
+    /** Detects a specific bug in older server versions */
     bool rootEtagChangesNotOnlySubFolderEtags();
+
+    /** True when the server supports HTTP2  */
+    bool isHttp2Supported() { return _http2Supported; }
+    void setHttp2Supported(bool value) { _http2Supported = value; }
 
     void clearCookieJar();
     void lendCookieJarTo(QNetworkAccessManager *guest);
+    QString cookieJarPath();
 
     void resetNetworkAccessManager();
-    QNetworkAccessManager* networkAccessManager();
+    QNetworkAccessManager *networkAccessManager();
+    QSharedPointer<QNetworkAccessManager> sharedNetworkAccessManager();
 
-    /// Called by network jobs on credential errors.
+    /// Called by network jobs on credential errors, emits invalidCredentials()
     void handleInvalidCredentials();
 
+public slots:
+    /// Used when forgetting credentials
+    void clearQNAMCache();
+    void slotHandleSslErrors(QNetworkReply *, QList<QSslError>);
+
 signals:
+    /// Emitted whenever there's network activity
     void propagatorNetworkActivity();
+
+    /// Triggered by handleInvalidCredentials()
     void invalidCredentials();
-    void credentialsFetched(AbstractCredentials* credentials);
-    void credentialsAsked(AbstractCredentials* credentials);
+
+    void credentialsFetched(AbstractCredentials *credentials);
+    void credentialsAsked(AbstractCredentials *credentials);
 
     /// Forwards from QNetworkAccessManager::proxyAuthenticationRequired().
-    void proxyAuthenticationRequired(const QNetworkProxy&, QAuthenticator*);
+    void proxyAuthenticationRequired(const QNetworkProxy &, QAuthenticator *);
 
     // e.g. when the approved SSL certificates changed
-    void wantsAccountSaved(Account* acc);
+    void wantsAccountSaved(Account *acc);
 
-    void serverVersionChanged(Account* account, const QString& newVersion, const QString& oldVersion);
+    void serverVersionChanged(Account *account, const QString &newVersion, const QString &oldVersion);
+
+    void accountChangedAvatar();
+    void accountChangedDisplayName();
 
 protected Q_SLOTS:
-    void slotHandleSslErrors(QNetworkReply*,QList<QSslError>);
     void slotCredentialsFetched();
     void slotCredentialsAsked();
 
 private:
     Account(QObject *parent = 0);
+    void setSharedThis(AccountPtr sharedThis);
 
     QWeakPointer<Account> _sharedThis;
     QString _id;
+    QString _davUser;
+    QString _displayName;
+#ifndef TOKEN_AUTH_ONLY
+    QImage _avatarImg;
+#endif
     QMap<QString, QVariant> _settingsMap;
     QUrl _url;
+
+    /** If url to use for any user-visible urls.
+     *
+     * If the server configures overwritehost this can be different from
+     * the connection url in _url. We retrieve the visible host through
+     * the ocs/v1.php/config endpoint in ConnectionValidator.
+     */
+    QUrl _userVisibleUrl;
+
     QList<QSslCertificate> _approvedCerts;
     QSslConfiguration _sslConfiguration;
     Capabilities _capabilities;
@@ -215,19 +292,17 @@ private:
     QScopedPointer<AbstractSslErrorHandler> _sslErrorHandler;
     QuotaInfo *_quotaInfo;
     QSharedPointer<QNetworkAccessManager> _am;
-    QSharedPointer<AbstractCredentials> _credentials;
+    QScopedPointer<AbstractCredentials> _credentials;
+    bool _http2Supported = false;
 
     /// Certificates that were explicitly rejected by the user
     QList<QSslCertificate> _rejectedCertificates;
 
     static QString _configFileName;
-    QByteArray _pemCertificate; 
-    QString _pemPrivateKey;  
+
     QString _davPath; // defaults to value from theme, might be overwritten in brandings
-    bool _wasMigrated;
     friend class AccountManager;
 };
-
 }
 
 Q_DECLARE_METATYPE(OCC::AccountPtr)

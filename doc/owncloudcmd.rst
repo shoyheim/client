@@ -49,7 +49,7 @@ Other command line switches supported by ``owncloudcmd`` include the following:
       Exclude list file
 
 ``--unsyncedfolders [file]``
-      File containing the list of unsynced remote folders (selective sync)
+      File containing the list of un-synced remote folders (selective sync)
 
 ``--max-sync-retries [n]``
       Retries maximum n times (defaults to 3)
@@ -60,12 +60,11 @@ Other command line switches supported by ``owncloudcmd`` include the following:
 Credential Handling
 ~~~~~~~~~~~~~~~~~~~
 
-``owncloudcmd`` uses the credentials of the GUI synchronization client.
-If no client is configured, or if you choose to use a different user to synchronize,
-you can specify the user
-password setting with the usual URL pattern.  For example::
+``owncloudcmd`` requires the user to specify the username and password using the standard URL pattern, e.g., 
 
-  $ owncloudcmd / https://carla:secret@server/owncloud/remote.php/webdav/
+::
+
+  $ owncloudcmd /home/user/my_sync_folder https://carla:secret@server/owncloud/remote.php/webdav/
 
 To synchronize the ownCloud directory ``Music`` to the local directory
 ``media/music``, through a proxy listening on port ``8080``, and on a gateway
@@ -77,3 +76,11 @@ machine using IP address ``192.168.178.1``, the command line would be::
 
 ``owncloudcmd`` will prompt for the user name and password, unless they have
 been specified on the command line or ``-n`` has been passed.
+
+Exclude List
+~~~~~~~~~~~~
+
+``owncloudcmd`` requires access to an exclude list file. It must either be
+installed along with ``owncloudcmd`` and thus be available in a system location,
+be placed next to the binary as ``sync-exclude.lst`` or be explicitly specified
+with the ``--exclude`` switch.

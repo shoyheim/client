@@ -22,17 +22,20 @@ namespace OCC {
  * @brief The MoveJob class
  * @ingroup libsync
  */
-class MoveJob : public AbstractNetworkJob {
+class MoveJob : public AbstractNetworkJob
+{
     Q_OBJECT
     const QString _destination;
+    const QUrl _url; // Only used (instead of path) when the constructor taking an URL is used
+    QMap<QByteArray, QByteArray> _extraHeaders;
+
 public:
-    explicit MoveJob(AccountPtr account, const QString& path, const QString &destination, QObject* parent = 0);
+    explicit MoveJob(AccountPtr account, const QString &path, const QString &destination, QObject *parent = 0);
+    explicit MoveJob(AccountPtr account, const QUrl &url, const QString &destination,
+        QMap<QByteArray, QByteArray> _extraHeaders, QObject *parent = 0);
 
     void start() Q_DECL_OVERRIDE;
     bool finished() Q_DECL_OVERRIDE;
-
-    QString errorString();
-    bool timedOut() { return _timedout; }
 
 signals:
     void finishedSignal();
@@ -42,18 +45,27 @@ signals:
  * @brief The PropagateRemoteMove class
  * @ingroup libsync
  */
-class PropagateRemoteMove : public PropagateItemJob {
+class PropagateRemoteMove : public PropagateItemJob
+{
     Q_OBJECT
     QPointer<MoveJob> _job;
+
 public:
-    PropagateRemoteMove (OwncloudPropagator* propagator,const SyncFileItemPtr& item)
-        : PropagateItemJob(propagator, item) {}
+    PropagateRemoteMove(OwncloudPropagator *propagator, const SyncFileItemPtr &item)
+        : PropagateItemJob(propagator, item)
+    {
+    }
     void start() Q_DECL_OVERRIDE;
-    void abort() Q_DECL_OVERRIDE;
-    JobParallelism parallelism() Q_DECL_OVERRIDE { return OCC::PropagatorJob::WaitForFinishedInParentDirectory; }
+    void abort(PropagatorJob::AbortType abortType) Q_DECL_OVERRIDE;
+    JobParallelism parallelism() Q_DECL_OVERRIDE { return _item->isDirectory() ? WaitForFinished : FullParallelism; }
+
+    /**
+     * Rename the directory in the selective sync list
+     */
+    static bool adjustSelectiveSync(SyncJournalDb *journal, const QString &from, const QString &to);
+
 private slots:
     void slotMoveJobFinished();
     void finalize();
 };
-
 }

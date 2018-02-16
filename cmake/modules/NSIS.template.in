@@ -12,9 +12,6 @@
 
 !define CRASHREPORTER_EXECUTABLE "@CRASHREPORTER_EXECUTABLE@"
 
-!define CLSID "@APPLICATION_CLSID@"
-!define NavigationPaneRegKey "Software\Classes\CLSID\${CLSID}"
-
 ;-----------------------------------------------------------------------------
 ; Some installer script options (comment-out options not required)
 ;-----------------------------------------------------------------------------
@@ -114,14 +111,15 @@ ReserveFile "${NSISDIR}\Plugins\InstallOptions.dll"
 ; Modern User Interface (MUI) definitions and setup.
 ;-----------------------------------------------------------------------------
 !define MUI_ABORTWARNING
-!define MUI_ICON ${CPACK_PACKAGE_ICON}
-!define MUI_UNICON ${CPACK_PACKAGE_ICON}
+!define MUI_ICON ${NSI_PATH}\installer.ico
+!define MUI_UNICON ${NSI_PATH}\installer.ico
 !define MUI_WELCOMEFINISHPAGE_BITMAP ${WIN_SETUP_BITMAP_PATH}/welcome.bmp
 !define MUI_HEADERIMAGE
 !define MUI_HEADERIMAGE_BITMAP  ${WIN_SETUP_BITMAP_PATH}/page_header.bmp
 !define MUI_COMPONENTSPAGE_SMALLDESC
-!define MUI_FINISHPAGE_LINK "${APPLICATION_DOMAIN}"
-!define MUI_FINISHPAGE_LINK_LOCATION "http://${APPLICATION_DOMAIN}"
+; We removed this, h1 issue 191687
+;!define MUI_FINISHPAGE_LINK "${APPLICATION_DOMAIN}"
+;!define MUI_FINISHPAGE_LINK_LOCATION "http://${APPLICATION_DOMAIN}"
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !ifdef OPTION_FINISHPAGE_RELEASE_NOTES
    !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
@@ -631,6 +629,10 @@ Section "${APPLICATION_NAME}" SEC_APPLICATION
    File "${MING_BIN}\libxslt-1.dll"
    File "${MING_BIN}\libxml2-2.dll"
    File "${MING_BIN}\zlib1.dll"
+   File "${MING_BIN}\libharfbuzz-0.dll"
+   File "${MING_BIN}\libfreetype-6.dll"
+   File "${MING_BIN}\libglib-2.0-0.dll"
+   File "${MING_BIN}\libintl-8.dll"
    File "${MING_BIN}\libsqlite3-0.dll"
    
    File "${MING_BIN}\libharfbuzz-0.dll"
@@ -670,11 +672,11 @@ SectionEnd
          !insertmacro InstallLib REGDLL NOTSHARED REBOOT_PROTECTED "${SOURCE_PATH}\binary\shell_integration\windows\Release\x64\OCOverlays_x64.dll" "$INSTDIR\shellext\OCOverlays_x64.dll" "$INSTDIR\shellext"
          !insertmacro InstallLib REGDLL NOTSHARED REBOOT_PROTECTED "${SOURCE_PATH}\binary\shell_integration\windows\Release\x64\OCContextMenu_x64.dll" "$INSTDIR\shellext\OCContextMenu_x64.dll" "$INSTDIR\shellext"
          !undef LIBRARY_X64
-     ${Endif}
-     !insertmacro InstallLib DLL NOTSHARED REBOOT_PROTECTED "${SOURCE_PATH}\binary\shell_integration\windows\Release\Win32\OCUtil_x86.dll" "$INSTDIR\shellext\OCUtil_x86.dll" "$INSTDIR\shellext"
-     !insertmacro InstallLib REGDLL NOTSHARED REBOOT_PROTECTED "${SOURCE_PATH}\binary\shell_integration\windows\Release\Win32\OCOverlays_x86.dll" "$INSTDIR\shellext\OCOverlays_x86.dll" "$INSTDIR\shellext"
-     !insertmacro InstallLib REGDLL NOTSHARED REBOOT_PROTECTED "${SOURCE_PATH}\binary\shell_integration\windows\Release\Win32\OCContextMenu_x86.dll" "$INSTDIR\shellext\OCContextMenu_x86.dll" "$INSTDIR\shellext"
-      ;${Endif}
+     ${Else}
+         !insertmacro InstallLib DLL NOTSHARED REBOOT_PROTECTED "${SOURCE_PATH}\binary\shell_integration\windows\Release\Win32\OCUtil_x86.dll" "$INSTDIR\shellext\OCUtil_x86.dll" "$INSTDIR\shellext"
+         !insertmacro InstallLib REGDLL NOTSHARED REBOOT_PROTECTED "${SOURCE_PATH}\binary\shell_integration\windows\Release\Win32\OCOverlays_x86.dll" "$INSTDIR\shellext\OCOverlays_x86.dll" "$INSTDIR\shellext"
+         !insertmacro InstallLib REGDLL NOTSHARED REBOOT_PROTECTED "${SOURCE_PATH}\binary\shell_integration\windows\Release\Win32\OCContextMenu_x86.dll" "$INSTDIR\shellext\OCContextMenu_x86.dll" "$INSTDIR\shellext"
+      ${Endif}
       !undef LIBRARY_COM
       !undef LIBRARY_SHELL_EXTENSION
       !undef LIBRARY_IGNORE_VERSION

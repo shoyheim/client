@@ -7,7 +7,7 @@ On Microsoft Windows systems:
         ``%LOCALAPPDATA%\ownCloud\owncloud.cfg``
 
 On MAC OS X systems:
-        ``$HOME/Library/Application Support/ownCloud``
+        ``$HOME/Library/Application Support/ownCloud/owncloud.cfg``
 
 
 The configuration file contains settings using the Microsoft Windows .ini file
@@ -16,15 +16,50 @@ format. You can overwrite changes using the ownCloud configuration dialog.
 .. note:: Use caution when making changes to the ownCloud Client configuration
    file.  Incorrect settings can produce unintended results.
 
-You can change the following configuration settings (must be under the ``[ownCloud]`` section)
+Some interesting values that can be set on the configuration file are:
 
-- ``remotePollInterval`` (default: ``30000``) -- Specifies the poll time for the remote repository in milliseconds.
++----------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``[ownCloud]`` section                                                                                                                                   |
++=================================+===============+========================================================================================================+
+| Variable                        | Default       | Meaning                                                                                                |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``remotePollInterval``          | ``30000``     | Specifies the poll time for the remote repository in milliseconds.                                     |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``forceSyncInterval``           | ``7200000``   | The duration of no activity after which a synchronization run shall be triggered automatically.        |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``notificationRefreshInterval`` | ``300000``    | Specifies the default interval of checking for new server notifications in milliseconds.               |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
 
-- ``maxLogLines`` (default:  ``20000``) -- Specifies the maximum number of log lines displayed in the log window.
 
-- ``chunkSize`` (default:  ``5242880``) -- Specifies the chunk size of uploaded files in bytes.
++----------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``[General]`` section                                                                                                                                    |
++=================================+===============+========================================================================================================+
+| Variable                        | Default       | Meaning                                                                                                |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``chunkSize``                   | ``5242880``   | Specifies the chunk size of uploaded files in bytes.                                                   |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``promptDeleteAllFiles``        | ``true``      | If a UI prompt should ask for confirmation if it was detected that all files and folders were deleted. |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``maxLogLines``                 | ``20000``     | Specifies the maximum number of log lines displayed in the log window.                                 |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``timeout``                     | ``300``       | The timeout for network connections in seconds.                                                        |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
 
-- ``promptDeleteAllFiles`` (default:  ``true``) -- If a UI prompt should ask for confirmation if it was detected that all files and folders were deleted.
 
-- ``notificationRefreshInterval`` (default``300,000``)  -- Specifies the default interval of checking for new server notifications in milliseconds.
-
++----------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``[Proxy]`` section                                                                                                                                      |
++=================================+===============+========================================================================================================+
+| Variable                        | Default       | Meaning                                                                                                |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``host``                        | ``127.0.0.1`` | The address of the proxy server.                                                                       |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``port``                        | ``8080``      | The port were the proxy is listening.                                                                  |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+
+| ``type``                        | ``2``         | ``0`` for System Proxy.                                                                                |
++                                 +               +--------------------------------------------------------------------------------------------------------+
+|                                 |               | ``1`` for SOCKS5 Proxy.                                                                                |
++                                 +               +--------------------------------------------------------------------------------------------------------+
+|                                 |               | ``2`` for No Proxy.                                                                                    |
++                                 +               +--------------------------------------------------------------------------------------------------------+
+|                                 |               | ``3`` for HTTP(S) Proxy.                                                                               |
++---------------------------------+---------------+--------------------------------------------------------------------------------------------------------+

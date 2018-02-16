@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -22,8 +23,7 @@
 
 #include "folderwatcher.h"
 
-namespace OCC
-{
+namespace OCC {
 
 /**
  * @brief Linux (inotify) API implementation of FolderWatcher
@@ -33,7 +33,7 @@ class FolderWatcherPrivate : public QObject
 {
     Q_OBJECT
 public:
-    FolderWatcherPrivate() { }
+    FolderWatcherPrivate() {}
     FolderWatcherPrivate(FolderWatcher *p, const QString &path);
     ~FolderWatcherPrivate();
 
@@ -45,18 +45,17 @@ protected slots:
     void slotAddFolderRecursive(const QString &path);
 
 protected:
-    bool findFoldersBelow( const QDir& dir, QStringList& fullList );
-    void inotifyRegisterPath(const QString& path);
+    bool findFoldersBelow(const QDir &dir, QStringList &fullList);
+    void inotifyRegisterPath(const QString &path);
 
 private:
     FolderWatcher *_parent;
 
     QString _folder;
-    QHash <int, QString> _watches;
+    QHash<int, QString> _watches;
     QScopedPointer<QSocketNotifier> _socket;
     int _fd;
 };
-
 }
 
 #endif

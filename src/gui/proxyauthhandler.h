@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -46,18 +47,18 @@ class ProxyAuthHandler : public QObject
     Q_OBJECT
 
 public:
-    static ProxyAuthHandler* instance();
+    static ProxyAuthHandler *instance();
 
     virtual ~ProxyAuthHandler();
 
 public slots:
     /// Intended for QNetworkAccessManager::proxyAuthenticationRequired()
-    void handleProxyAuthenticationRequired(const QNetworkProxy& proxy,
-                                           QAuthenticator* authenticator);
+    void handleProxyAuthenticationRequired(const QNetworkProxy &proxy,
+        QAuthenticator *authenticator);
 
 private slots:
     void slotKeychainJobDone();
-    void slotSenderDestroyed(QObject*);
+    void slotSenderDestroyed(QObject *);
 
 private:
     ProxyAuthHandler();
@@ -106,7 +107,7 @@ private:
     /// To distinguish between a new QNAM asking for credentials and credentials
     /// failing for an existing QNAM, we keep track of the senders of the
     /// proxyAuthRequired signal here.
-    QSet<QObject*> _gaveCredentialsTo;
+    QSet<QObject *> _gaveCredentialsTo;
 };
 
 } // namespace OCC

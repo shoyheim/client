@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -20,8 +21,7 @@
 class QByteArray;
 class QUrl;
 
-namespace OCC
-{
+namespace OCC {
 
 /**
  * @brief The AccessManager class
@@ -32,12 +32,12 @@ class OWNCLOUDSYNC_EXPORT AccessManager : public QNetworkAccessManager
     Q_OBJECT
 
 public:
-    AccessManager(QObject* parent = 0);
+    AccessManager(QObject *parent = 0);
 
-    void setRawCookie(const  QByteArray &rawCookie, const  QUrl &url);
+    void setRawCookie(const QByteArray &rawCookie, const QUrl &url);
 
 protected:
-    QNetworkReply* createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest& request, QIODevice* outgoingData = 0) Q_DECL_OVERRIDE;
+    QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = 0) Q_DECL_OVERRIDE;
 };
 
 } // namespace OCC

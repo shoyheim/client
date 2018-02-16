@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -31,21 +32,44 @@
 #include <QLabel>
 #include <QStandardItemModel>
 #include <QPushButton>
-#include <QDebug>
 #include <QSettings>
+#include <QPainter>
+#include <QPainterPath>
 
 namespace OCC {
+
+#include "settingsdialogcommon.cpp"
+
+
+// Duplicate in settingsdialog.cpp
+static QIcon circleMask(const QImage &avatar)
+{
+    int dim = avatar.width();
+
+    QPixmap fixedImage(dim, dim);
+    fixedImage.fill(Qt::transparent);
+
+    QPainter imgPainter(&fixedImage);
+    QPainterPath clip;
+    clip.addEllipse(0, 0, dim, dim);
+    imgPainter.setClipPath(clip);
+    imgPainter.drawImage(0, 0, avatar);
+    imgPainter.end();
+
+    return QIcon(fixedImage);
+}
+
 
 //
 // Whenever you change something here check both settingsdialog.cpp and settingsdialogmac.cpp !
 //
 SettingsDialogMac::SettingsDialogMac(ownCloudGui *gui, QWidget *parent)
-    : MacPreferencesWindow(parent), _gui(gui)
+    : MacPreferencesWindow(parent)
+    , _gui(gui)
 {
     // do not show minimize button. There is no use, and restoring the
     // dialog from minimize is broken in MacPreferencesWindow
-    setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::CustomizeWindowHint |
-                   Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+    setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::CustomizeWindowHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
 
 
     // Emulate dialog behavior: Escape means close
@@ -71,14 +95,14 @@ SettingsDialogMac::SettingsDialogMac(ownCloudGui *gui, QWidget *parent)
     QIcon activityIcon(QLatin1String(":/client/resources/activity.png"));
     _activitySettings = new ActivitySettings;
     addPreferencesPanel(activityIcon, tr("Activity"), _activitySettings);
-    connect( _activitySettings, SIGNAL(guiLog(QString,QString)), _gui,
-        SLOT(slotShowOptionalTrayMessage(QString,QString)) );
+    connect(_activitySettings, SIGNAL(guiLog(QString, QString)), _gui,
+        SLOT(slotShowOptionalTrayMessage(QString, QString)));
 
     connect(AccountManager::instance(), &AccountManager::accountAdded,
-            this, &SettingsDialogMac::accountAdded);
+        this, &SettingsDialogMac::accountAdded);
     connect(AccountManager::instance(), &AccountManager::accountRemoved,
-            this, &SettingsDialogMac::accountRemoved);
-    foreach (auto ai , AccountManager::instance()->accounts()) {
+        this, &SettingsDialogMac::accountRemoved);
+    foreach (auto ai, AccountManager::instance()->accounts()) {
         accountAdded(ai.data());
     }
 
@@ -112,25 +136,37 @@ void SettingsDialogMac::showActivityPage()
     setCurrentPanelIndex(preferencePanelCount() - 1 - 2);
 }
 
+void SettingsDialogMac::showIssuesList(const QString &folderAlias)
+{
+    // Count backwards (0-based) from the last panel (multiple accounts can be on the left)
+    setCurrentPanelIndex(preferencePanelCount() - 1 - 2);
+    _activitySettings->slotShowIssuesTab(folderAlias);
+}
+
+
 void SettingsDialogMac::accountAdded(AccountState *s)
 {
     QIcon accountIcon = MacStandardIcon::icon(MacStandardIcon::UserAccounts);
     auto accountSettings = new AccountSettings(s, this);
 
-    QString displayName = Theme::instance()->multiAccount() ? s->shortDisplayNameForSettings() : tr("Account");
+    QString displayName = Theme::instance()->multiAccount() ? SettingsDialogCommon::shortDisplayNameForSettings(s->account().data(), 0) : tr("Account");
 
     insertPreferencesPanel(0, accountIcon, displayName, accountSettings);
 
-    connect( accountSettings, &AccountSettings::folderChanged, _gui,  &ownCloudGui::slotFoldersChanged);
-    connect( accountSettings, &AccountSettings::openFolderAlias, _gui, &ownCloudGui::slotFolderOpenAction);
+    connect(accountSettings, &AccountSettings::folderChanged, _gui, &ownCloudGui::slotFoldersChanged);
+    connect(accountSettings, &AccountSettings::openFolderAlias, _gui, &ownCloudGui::slotFolderOpenAction);
+    connect(accountSettings, &AccountSettings::showIssuesList, this, &SettingsDialogMac::showIssuesList);
+
+    connect(s->account().data(), &Account::accountChangedAvatar, this, &SettingsDialogMac::slotAccountAvatarChanged);
+    connect(s->account().data(), &Account::accountChangedDisplayName, this, &SettingsDialogMac::slotAccountDisplayNameChanged);
 
     slotRefreshActivity(s);
 }
 
 void SettingsDialogMac::accountRemoved(AccountState *s)
 {
-    auto list = findChildren<AccountSettings*>(QString());
-    foreach(auto p, list) {
+    auto list = findChildren<AccountSettings *>(QString());
+    foreach (auto p, list) {
         if (p->accountsState() == s) {
             removePreferencesPanel(p);
         }
@@ -139,10 +175,43 @@ void SettingsDialogMac::accountRemoved(AccountState *s)
     _activitySettings->slotRemoveAccount(s);
 }
 
-void SettingsDialogMac::slotRefreshActivity( AccountState* accountState )
+void SettingsDialogMac::slotRefreshActivity(AccountState *accountState)
 {
     if (accountState) {
         _activitySettings->slotRefresh(accountState);
+    }
+}
+
+void SettingsDialogMac::slotAccountAvatarChanged()
+{
+    Account *account = static_cast<Account *>(sender());
+    auto list = findChildren<AccountSettings *>(QString());
+    foreach (auto p, list) {
+        if (p->accountsState()->account() == account) {
+            int idx = indexForPanel(p);
+            QImage pix = account->avatar();
+            if (!pix.isNull()) {
+                setPreferencesPanelIcon(idx, circleMask(pix));
+            }
+        }
+    }
+}
+
+void SettingsDialogMac::slotAccountDisplayNameChanged()
+{
+    Account *account = static_cast<Account *>(sender());
+    auto list = findChildren<AccountSettings *>(QString());
+    foreach (auto p, list) {
+        if (p->accountsState()->account() == account) {
+            int idx = indexForPanel(p);
+            QString displayName = account->displayName();
+            if (!displayName.isNull()) {
+                displayName = Theme::instance()->multiAccount()
+                        ? SettingsDialogCommon::shortDisplayNameForSettings(account, 0)
+                        : tr("Account");
+                setPreferencesPanelTitle(idx, displayName);
+            }
+        }
     }
 }
 

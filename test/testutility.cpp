@@ -5,12 +5,9 @@
 */
 
 #include <QtTest>
+#include <QTemporaryDir>
 
-#include "utility.h"
-
-#define STR_(X) #X
-#define STR(X) STR_(X)
-#define BIN_PATH STR(OWNCLOUD_BIN_PATH)
+#include "common/utility.h"
 
 using namespace OCC::Utility;
 
@@ -37,7 +34,7 @@ private slots:
         QCOMPARE(octetsToString(10240) , QString("10 KB"));
 
         QCOMPARE(octetsToString(123456) , QString("121 KB"));
-        QCOMPARE(octetsToString(1234567) , QString("1 MB"));
+        QCOMPARE(octetsToString(1234567) , QString("1.2 MB"));
         QCOMPARE(octetsToString(12345678) , QString("12 MB"));
         QCOMPARE(octetsToString(123456789) , QString("118 MB"));
         QCOMPARE(octetsToString(1000LL*1000*1000 * 5) , QString("4.7 GB"));
@@ -64,14 +61,6 @@ private slots:
         QVERIFY(hasLaunchOnStartup(appName) == false);
     }
 
-    void testToCSyncScheme()
-    {
-        QVERIFY(toCSyncScheme("http://example.com/owncloud/") ==
-                              "owncloud://example.com/owncloud/");
-        QVERIFY(toCSyncScheme("https://example.com/owncloud/") ==
-                              "ownclouds://example.com/owncloud/");
-    }
-
     void testDurationToDescriptiveString()
     {
         QLocale::setDefault(QLocale("C"));
@@ -80,7 +69,7 @@ private slots:
         quint64 sec = 1000;
         quint64 hour = 3600 * sec;
 
-        QDateTime current = QDateTime::currentDateTime();
+        QDateTime current = QDateTime::currentDateTimeUtc();
 
         QCOMPARE(durationToDescriptiveString2(0), QString("0 second(s)") );
         QCOMPARE(durationToDescriptiveString2(5), QString("0 second(s)") );
@@ -123,7 +112,7 @@ private slots:
             }
             // pass the binary name owncloud to the next call. This brakes branding,
             // but branding is not supposed to work with this.
-            QString ver = versionOfInstalledBinary(BIN_PATH+QLatin1String("/owncloud"));
+            QString ver = versionOfInstalledBinary(OWNCLOUD_BIN_PATH+QLatin1String("/owncloud"));
 	    qDebug() << "Version of installed ownCloud Binary: " << ver;
 	    QVERIFY( !ver.isEmpty());
 
@@ -158,7 +147,48 @@ private slots:
         s = timeAgoInWords(earlyTS, laterTS );
         QCOMPARE(s, QLatin1String("Less than a minute ago"));
     }
+
+    void testFsCasePreserving()
+    {
+        qputenv("OWNCLOUD_TEST_CASE_PRESERVING", "1");
+        QVERIFY(fsCasePreserving());
+        qputenv("OWNCLOUD_TEST_CASE_PRESERVING", "0");
+        QVERIFY(! fsCasePreserving());
+        qunsetenv("OWNCLOUD_TEST_CASE_PRESERVING");
+        QVERIFY(isMac() || isWindows() ? fsCasePreserving() : ! fsCasePreserving());
+    }
+
+    void testFileNamesEqual()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QDir dir2(dir.path());
+        QVERIFY(dir2.mkpath("test"));
+        if( !fsCasePreserving() ) {
+        QVERIFY(dir2.mkpath("TEST"));
+        }
+        QVERIFY(dir2.mkpath("test/TESTI"));
+        QVERIFY(dir2.mkpath("TESTI"));
+
+        QString a = dir.path();
+        QString b = dir.path();
+
+        QVERIFY(fileNamesEqual(a, b));
+
+        QVERIFY(fileNamesEqual(a+"/test", b+"/test")); // both exist
+        QVERIFY(fileNamesEqual(a+"/test/TESTI", b+"/test/../test/TESTI")); // both exist
+
+        qputenv("OWNCLOUD_TEST_CASE_PRESERVING", "1");
+        QVERIFY(fileNamesEqual(a+"/test", b+"/TEST")); // both exist
+
+        QVERIFY(!fileNamesEqual(a+"/test", b+"/test/TESTI")); // both are different
+
+        dir.remove();
+        qunsetenv("OWNCLOUD_TEST_CASE_PRESERVING");
+    }
+
+
 };
 
-QTEST_APPLESS_MAIN(TestUtility)
+QTEST_GUILESS_MAIN(TestUtility)
 #include "testutility.moc"

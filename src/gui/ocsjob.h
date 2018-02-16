@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -23,6 +24,10 @@
 #include <QUrl>
 
 #define OCS_SUCCESS_STATUS_CODE 100
+// Apparantly the v2.php URLs can return that
+#define OCS_SUCCESS_STATUS_CODE_V2 200
+
+class QJsonDocument;
 
 namespace OCC {
 
@@ -35,11 +40,11 @@ namespace OCC {
  *
  * All OCS jobs (e.g. sharing) should extend this class.
  */
-class OcsJob : public AbstractNetworkJob {
+class OcsJob : public AbstractNetworkJob
+{
     Q_OBJECT
 
 protected:
-
     explicit OcsJob(AccountPtr account);
 
     /**
@@ -47,7 +52,7 @@ protected:
      *
      * @param verb currently supported PUT POST DELETE
      */
-    void setVerb(const QByteArray& verb);
+    void setVerb(const QByteArray &verb);
 
     /**
      * Add a new parameter to the request.
@@ -56,7 +61,7 @@ protected:
      * @param name The name of the parameter
      * @param value The value of the parameter
      */
-    void addParam(const QString& name, const QString &value);
+    void addParam(const QString &name, const QString &value);
 
     /**
      * Set the post parameters
@@ -64,7 +69,7 @@ protected:
      * @param postParams list of pairs to add (urlEncoded) to the body of the
      * request
      */
-    void setPostParams(const QList<QPair<QString, QString> >& postParams);
+    void setPostParams(const QList<QPair<QString, QString>> &postParams);
 
     /**
      * List of expected statuscodes for this request
@@ -92,7 +97,7 @@ public:
      * @param message The message that is set in the metadata
      * @return The statuscode of the OCS response
      */
-    static int getJsonReturnCode(const QVariantMap &json, QString &message);
+    static int getJsonReturnCode(const QJsonDocument &json, QString &message);
 
 protected slots:
 
@@ -108,7 +113,7 @@ signals:
      *
      * @param reply the reply
      */
-    void jobFinished(QVariantMap reply);
+    void jobFinished(QJsonDocument reply);
 
     /**
      * The status code was not one of the expected (passing)
@@ -124,10 +129,9 @@ private slots:
 
 private:
     QByteArray _verb;
-    QList<QPair<QString, QString> > _params;
+    QList<QPair<QString, QString>> _params;
     QVector<int> _passStatusCodes;
 };
-
 }
 
 #endif // OCSJOB_H
