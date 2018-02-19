@@ -116,8 +116,9 @@ ReserveFile "${NSISDIR}\Plugins\InstallOptions.dll"
 !define MUI_HEADERIMAGE
 !define MUI_HEADERIMAGE_BITMAP  ${WIN_SETUP_BITMAP_PATH}/page_header.bmp
 !define MUI_COMPONENTSPAGE_SMALLDESC
-!define MUI_FINISHPAGE_LINK "${APPLICATION_DOMAIN}"
-!define MUI_FINISHPAGE_LINK_LOCATION "http://${APPLICATION_DOMAIN}"
+; We removed this, h1 issue 191687
+;!define MUI_FINISHPAGE_LINK "${APPLICATION_DOMAIN}"
+;!define MUI_FINISHPAGE_LINK_LOCATION "http://${APPLICATION_DOMAIN}"
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !ifdef OPTION_FINISHPAGE_RELEASE_NOTES
    !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
@@ -418,10 +419,8 @@ Section "${APPLICATION_NAME}" SEC_APPLICATION
    File "${QT_DLL_PATH}\Qt5Core.dll"
    File "${QT_DLL_PATH}\Qt5Gui.dll"
    File "${QT_DLL_PATH}\Qt5Network.dll"
-   File "${QT_DLL_PATH}\Qt5OpenGL.dll"
    File "${QT_DLL_PATH}\Qt5PrintSupport.dll"
    File "${QT_DLL_PATH}\Qt5Qml.dll"
-   File "${QT_DLL_PATH}\Qt5Quick.dll"
    File "${QT_DLL_PATH}\Qt5Sql.dll"
    File "${QT_DLL_PATH}\Qt5WebKit.dll"
    File "${QT_DLL_PATH}\Qt5WebKitWidgets.dll"
@@ -435,9 +434,9 @@ Section "${APPLICATION_NAME}" SEC_APPLICATION
 
    ;Qt deps
    File "${MING_BIN}\libpng16-16.dll"
-   File "${MING_BIN}\icudata53.dll"
-   File "${MING_BIN}\icui18n53.dll"
-   File "${MING_BIN}\icuuc53.dll"
+   File "${MING_BIN}\icudata56.dll"
+   File "${MING_BIN}\icui18n56.dll"
+   File "${MING_BIN}\icuuc56.dll"
    File "${MING_BIN}\libEGL.dll"
    File "${MING_BIN}\libGLESv2.dll"
    File "${MING_BIN}\libjpeg-8.dll"
@@ -446,11 +445,14 @@ Section "${APPLICATION_NAME}" SEC_APPLICATION
    File "${MING_BIN}\libcrypto-10.dll"
    File "${MING_BIN}\libssl-10.dll"
    File "${MING_BIN}\libstdc++-6.dll"
-   File "${MING_BIN}\libwebp-4.dll"
+   File "${MING_BIN}\libwebp-5.dll"
    File "${MING_BIN}\libxslt-1.dll"
    File "${MING_BIN}\libxml2-2.dll"
    File "${MING_BIN}\zlib1.dll"
-   File "${MING_BIN}\libsqlite3-0.dll"
+   File "${MING_BIN}\libharfbuzz-0.dll"
+   File "${MING_BIN}\libfreetype-6.dll"
+   File "${MING_BIN}\libglib-2.0-0.dll"
+   File "${MING_BIN}\libintl-8.dll"
 
    ;QtKeyChain stuff
    File "${MING_BIN}\libqt5keychain.dll"
@@ -459,6 +461,7 @@ Section "${APPLICATION_NAME}" SEC_APPLICATION
    File "${MING_BIN}\libgcc_s_sjlj-1.dll"
    File "${MING_BIN}\libstdc++-6.dll"
    File "${MING_BIN}\libwinpthread-1.dll"
+   File "${MING_BIN}\libssp-0.dll"
 
    ;CSync configs
    File "${SOURCE_PATH}/sync-exclude.lst"
@@ -600,6 +603,35 @@ Section Uninstall
       MessageBox MB_YESNO $UNINSTALL_MESSAGEBOX /SD IDYES IDYES owncloud_installed
       Abort $UNINSTALL_ABORT
    owncloud_installed:
+
+   ; Delete Navigation Pane entries added for Windows 10.
+   ; On 64bit Windows, the client will be writing to the 64bit registry.
+   ${If} ${RunningX64}
+      SetRegView 64
+   ${EndIf}
+   StrCpy $0 0
+   loop:
+      ; Look at every registered explorer namespace for HKCU and check if it was added by our application
+      ; (we write to a custom "ApplicationName" value there).
+      EnumRegKey $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace" $0
+      StrCmp $1 "" done
+
+      ReadRegStr $R0 HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\$1" "ApplicationName"
+      StrCmp $R0 "${APPLICATION_NAME}" deleteClsid
+      ; Increment the index when not deleting the enumerated key.
+      IntOp $0 $0 + 1
+      goto loop
+
+      deleteClsid:
+         DetailPrint "Removing Navigation Pane CLSID $1"
+         ; Should match FolderMan::updateCloudStorageRegistry
+         DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\$1"
+         DeleteRegKey HKCU "Software\Classes\CLSID\$1"
+         DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" $1
+         goto loop
+   done:
+   ; Go back to the 32bit registry.
+   SetRegView lastused
 
    ;Delete registry keys.
    DeleteRegValue HKLM "Software\${APPLICATION_VENDOR}\${APPLICATION_NAME}" "VersionBuild"

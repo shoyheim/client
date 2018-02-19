@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -22,8 +23,7 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
-namespace OCC
-{
+namespace OCC {
 
 class OWNCLOUDSYNC_EXPORT AbstractCredentials : public QObject
 {
@@ -39,15 +39,30 @@ public:
      * Calling Account::setCredentials() will call this function.
      * Credentials only live as long as the underlying account object.
      */
-    virtual void setAccount(Account* account);
+    virtual void setAccount(Account *account);
 
-    virtual bool changed(AbstractCredentials* credentials) const = 0;
     virtual QString authType() const = 0;
     virtual QString user() const = 0;
-    virtual QNetworkAccessManager* getQNAM() const = 0;
+    virtual QNetworkAccessManager *createQNAM() const = 0;
+
+    /** Whether there are credentials that can be used for a connection attempt. */
     virtual bool ready() const = 0;
+
+    /** Whether fetchFromKeychain() was called before. */
+    bool wasFetched() const { return _wasFetched; }
+
+    /** Trigger (async) fetching of credential information
+     *
+     * Should set _wasFetched = true, and later emit fetched() when done.
+     */
     virtual void fetchFromKeychain() = 0;
+
+    /** Ask credentials from the user (typically async)
+     *
+     * Should emit asked() when done.
+     */
     virtual void askFromUser() = 0;
+
     virtual bool stillValid(QNetworkReply *reply) = 0;
     virtual void persist() = 0;
 
@@ -57,6 +72,8 @@ public:
      *
      * Note that sensitive data (like the password used to acquire the
      * session cookie) may be retained. See forgetSensitiveData().
+     *
+     * ready() must return false afterwards.
      */
     virtual void invalidateToken() = 0;
 
@@ -68,14 +85,26 @@ public:
      */
     virtual void forgetSensitiveData() = 0;
 
-    static QString keychainKey(const QString &url, const QString &user);
+    static QString keychainKey(const QString &url, const QString &user, const QString &accountId);
 
 Q_SIGNALS:
+    /** Emitted when fetchFromKeychain() is done.
+     *
+     * Note that ready() can be true or false, depending on whether there was useful
+     * data in the keychain.
+     */
     void fetched();
+
+    /** Emitted when askFromUser() is done.
+     *
+     * Note that ready() can be true or false, depending on whether the user provided
+     * data or not.
+     */
     void asked();
 
 protected:
-    Account* _account;
+    Account *_account;
+    bool _wasFetched;
 };
 
 } // namespace OCC

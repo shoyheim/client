@@ -35,10 +35,11 @@ class AbstractSslErrorHandler;
  * @brief The AbstractNetworkJob class
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT AbstractNetworkJob : public QObject {
+class OWNCLOUDSYNC_EXPORT AbstractNetworkJob : public QObject
+{
     Q_OBJECT
 public:
-    explicit AbstractNetworkJob(AccountPtr account, const QString &path, QObject* parent = 0);
+    explicit AbstractNetworkJob(AccountPtr account, const QString &path, QObject *parent = 0);
     virtual ~AbstractNetworkJob();
 
     virtual void start();
@@ -49,69 +50,160 @@ public:
     QString path() const { return _path; }
 
     void setReply(QNetworkReply *reply);
-    QNetworkReply* reply() const { return _reply; }
+    QNetworkReply *reply() const { return _reply; }
 
     void setIgnoreCredentialFailure(bool ignore);
     bool ignoreCredentialFailure() const { return _ignoreCredentialFailure; }
 
-    QByteArray responseTimestamp();
-    quint64 duration();
+    /** Whether to handle redirects transparently.
+     *
+     * If true, a follow-up request is issued automatically when
+     * a redirect is encountered. The finished() function is only
+     * called if there are no more redirects (or there are problems
+     * with the redirect).
+     *
+     * The transparent redirect following may be disabled for some
+     * requests where custom handling is necessary.
+     */
+    void setFollowRedirects(bool follow);
+    bool followRedirects() const { return _followRedirects; }
 
-    qint64 timeoutMsec() { return _timer.interval(); }
+    QByteArray responseTimestamp();
+
+    qint64 timeoutMsec() const { return _timer.interval(); }
+    bool timedOut() const { return _timedout; }
+
+    /** Returns an error message, if any. */
+    QString errorString() const;
+
+    /** Like errorString, but also checking the reply body for information.
+     *
+     * Specifically, sometimes xml bodies have extra error information.
+     * This function reads the body of the reply and parses out the
+     * error information, if possible.
+     *
+     * \a body is optinally filled with the reply body.
+     *
+     * Warning: Needs to call reply()->readAll().
+     */
+    QString errorStringParsingBody(QByteArray *body = 0);
+
+    /** static variable the HTTP timeout (in seconds). If set to 0, the default will be used
+     */
+    static int httpTimeout;
 
 public slots:
     void setTimeout(qint64 msec);
     void resetTimeout();
 signals:
+    /** Emitted on network error.
+     *
+     * \a reply is never null
+     */
     void networkError(QNetworkReply *reply);
     void networkActivity();
+
+    /** Emitted when a redirect is followed.
+     *
+     * \a reply The "please redirect" reply
+     * \a targetUrl Where to redirect to
+     * \a redirectCount Counts redirect hops, first is 0.
+     */
+    void redirected(QNetworkReply *reply, const QUrl &targetUrl, int redirectCount);
+
 protected:
+    /** Initiate a network request, returning a QNetworkReply.
+     *
+     * Calls setReply() and setupConnections() on it.
+     *
+     * Takes ownership of the requestBody (to allow redirects).
+     */
+    QNetworkReply *sendRequest(const QByteArray &verb, const QUrl &url,
+        QNetworkRequest req = QNetworkRequest(),
+        QIODevice *requestBody = 0);
+
+    // sendRequest does not take a relative path instead of an url,
+    // but the old API allowed that. We have this undefined overload
+    // to help catch usage errors
+    QNetworkReply *sendRequest(const QByteArray &verb, const QString &relativePath,
+        QNetworkRequest req = QNetworkRequest(),
+        QIODevice *requestBody = 0);
+
+    /** Makes this job drive a pre-made QNetworkReply
+     *
+     * This reply cannot have a QIODevice request body because we can't get
+     * at it and thus not resend it in case of redirects.
+     */
+    void adoptRequest(QNetworkReply *reply);
+
     void setupConnections(QNetworkReply *reply);
-    QNetworkReply* davRequest(const QByteArray& verb, const QString &relPath,
-                              QNetworkRequest req = QNetworkRequest(),
-                              QIODevice *data = 0);
-    QNetworkReply* davRequest(const QByteArray& verb, const QUrl &url,
-                              QNetworkRequest req = QNetworkRequest(),
-                              QIODevice *data = 0);
-    QNetworkReply* getRequest(const QString &relPath);
-    QNetworkReply* getRequest(const QUrl &url);
-    QNetworkReply* headRequest(const QString &relPath);
-    QNetworkReply* headRequest(const QUrl &url);
-    QNetworkReply* deleteRequest(const QUrl &url);
+
+    /** Can be used by derived classes to set up the network reply.
+     *
+     * Particularly useful when the request is redirected and reply()
+     * changes. For things like setting up additional signal connections
+     * on the new reply.
+     */
+    virtual void newReplyHook(QNetworkReply *) {}
+
+    /// Creates a url for the account from a relative path
+    QUrl makeAccountUrl(const QString &relativePath) const;
+
+    /// Like makeAccountUrl() but uses the account's dav base path
+    QUrl makeDavUrl(const QString &relativePath) const;
 
     int maxRedirects() const { return 10; }
+
+    /** Called at the end of QNetworkReply::finished processing.
+     *
+     * Returning true triggers a deleteLater() of this job.
+     */
     virtual bool finished() = 0;
-    QByteArray    _responseTimestamp;
-    QElapsedTimer _durationTimer;
-    quint64       _duration;
-    bool          _timedout;  // set to true when the timeout slot is received
+
+    /** Called on timeout.
+     *
+     * The default implementation aborts the reply.
+     */
+    virtual void onTimedOut();
+
+    QByteArray _responseTimestamp;
+    bool _timedout; // set to true when the timeout slot is received
 
     // Automatically follows redirects. Note that this only works for
     // GET requests that don't set up any HTTP body or other flags.
-    bool          _followRedirects;
+    bool _followRedirects;
 
 private slots:
     void slotFinished();
-    virtual void slotTimeout();
+    void slotTimeout();
 
 protected:
     AccountPtr _account;
+
 private:
-    QNetworkReply* addTimer(QNetworkReply *reply);
+    QNetworkReply *addTimer(QNetworkReply *reply);
     bool _ignoreCredentialFailure;
     QPointer<QNetworkReply> _reply; // (QPointer because the NetworkManager may be destroyed before the jobs at exit)
     QString _path;
     QTimer _timer;
     int _redirectCount;
+
+    // Set by the xyzRequest() functions and needed to be able to redirect
+    // requests, should it be required.
+    //
+    // Reparented to the currently running QNetworkReply.
+    QPointer<QIODevice> _requestBody;
 };
 
 /**
  * @brief Internal Helper class
  */
-class NetworkJobTimeoutPauser {
+class NetworkJobTimeoutPauser
+{
 public:
     NetworkJobTimeoutPauser(QNetworkReply *reply);
     ~NetworkJobTimeoutPauser();
+
 private:
     QPointer<QTimer> _timer;
 };
@@ -124,11 +216,26 @@ private:
  *
  * Returns a null string if no message was found.
  */
-QString OWNCLOUDSYNC_EXPORT extractErrorMessage(const QByteArray& errorResponse);
+QString OWNCLOUDSYNC_EXPORT extractErrorMessage(const QByteArray &errorResponse);
 
 /** Builds a error message based on the error and the reply body. */
-QString OWNCLOUDSYNC_EXPORT errorMessage(const QString& baseError, const QByteArray& body);
+QString OWNCLOUDSYNC_EXPORT errorMessage(const QString &baseError, const QByteArray &body);
+
+/** Helper to construct the HTTP verb used in the request
+ *
+ * Returns an empty QByteArray for UnknownOperation.
+ */
+QByteArray OWNCLOUDSYNC_EXPORT requestVerb(const QNetworkReply &reply);
+
+/** Nicer errorString() for QNetworkReply
+ *
+ * By default QNetworkReply::errorString() often produces messages like
+ *   "Error downloading <url> - server replied: <reason>"
+ * but the "downloading" part invariably confuses people since the
+ * error might very well have been produced by a PUT request.
+ *
+ * This function produces clearer error messages for HTTP errors.
+ */
+QString OWNCLOUDSYNC_EXPORT networkReplyErrorString(const QNetworkReply &reply);
 
 } // namespace OCC
-
-

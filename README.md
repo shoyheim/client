@@ -1,10 +1,7 @@
 # ownCloud Desktop Client
 
-| Job                               | State                                                                                                                                                             |
-|-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| client-build-matrix               | [![Build Status](https://ci.owncloud.org/job/client-build-matrix-linux/badge/icon)](https://ci.owncloud.org/job/client-build-matrix-linux/)                       |
-| client-test-matrix-linux-no-build | [![Build Status](https://ci.owncloud.org/buildStatus/icon?job=client-test-matrix-linux-no-build)](https://ci.owncloud.org/job/client-test-matrix-linux-no-build/) |
-| coverity_scan | [![Build Status](https://img.shields.io/coverity/scan/2482.svg)](https://scan.coverity.com/projects/owncloud-mirall)
+[![Build Status](https://jenkins.owncloud.org/buildStatus/icon?job=owncloud-client/client/master)](https://jenkins.owncloud.org/job/owncloud-client/job/client/job/master/) [![Build status](https://ci.appveyor.com/api/projects/status/a1x3dslys7de6e21/branch/master?svg=true)](https://ci.appveyor.com/project/ownclouders/client/branch/master)
+
 
 ## Introduction
 
@@ -27,7 +24,7 @@ https://github.com/owncloud/client.
 
 ## Building the source code
 
-[Building the Client](http://doc.owncloud.org/desktop/2.0/building.html)
+[Building the Client](http://doc.owncloud.org/desktop/2.3/building.html)
 in the ownCloud Desktop Client manual.
 
 ## Maintainers and Contributors

@@ -7,13 +7,11 @@
 
 #include <QtTest>
 
-#include "excludedfiles.h"
+#include "csync_exclude.h"
 
 using namespace OCC;
 
-#define STR_(X) #X
-#define STR(X) STR_(X)
-#define BIN_PATH STR(OWNCLOUD_BIN_PATH)
+#define EXCLUDE_LIST_FILE SOURCEDIR "/../../sync-exclude.lst"
 
 class TestExcludedFiles: public QObject
 {
@@ -22,7 +20,7 @@ class TestExcludedFiles: public QObject
 private slots:
     void testFun()
     {
-        auto & excluded = ExcludedFiles::instance();
+        ExcludedFiles excluded;
         bool excludeHidden = true;
         bool keepHidden = false;
 
@@ -31,10 +29,8 @@ private slots:
         QVERIFY(!excluded.isExcluded("/a/.b", "/a", keepHidden));
         QVERIFY(excluded.isExcluded("/a/.b", "/a", excludeHidden));
 
-        QString path(BIN_PATH);
-        path.append("/sync-exclude.lst");
-        excluded.addExcludeFilePath(path);
-        excluded.reloadExcludes();
+        excluded.addExcludeFilePath(EXCLUDE_LIST_FILE);
+        excluded.reloadExcludeFiles();
 
         QVERIFY(!excluded.isExcluded("/a/b", "/a", keepHidden));
         QVERIFY(excluded.isExcluded("/a/b~", "/a", keepHidden));

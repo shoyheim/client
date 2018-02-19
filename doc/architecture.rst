@@ -77,7 +77,7 @@ a synchronization process.
 
 Before the 1.3.0 release of the Desktop Client, the synchronization process
 might create false conflict files if time deviates. Original and changed files
-conflict only in their timestamp, but not in their content. This behaviour was
+conflict only in their timestamp, but not in their content. This behavior was
 changed to employ a binary check if files differ.
 
 Like files, directories also hold a unique ID that changes whenever one of the
@@ -132,44 +132,170 @@ changed and no synchronization occurs.
 In the event a file has changed on both the local and the remote repository
 since the last sync run, it can not easily be decided which version of the file
 is the one that should be used. However, changes to any side will not be lost.  Instead,
-a *conflict case* is created. The client resolves this conflict by creating a
-conflict file of the older of the two files and saving the newer file under the
-original file name. Conflict files are always created on the client and never
-on the server. The conflict file uses the same name as the original file, but
-is appended with the timestamp of the conflict detection.
+a *conflict case* is created. The client resolves this conflict by renaming the
+local file, appending a conflict label and timestamp, and saving the remote file
+under the original file name.
 
+Example: Assume there is a conflict in message.txt because its contents have
+changed both locally and remotely since the last sync run. The local file with
+the local changes will be renamed to message_conflict-20160101-153110.txt and
+the remote file will be downloaded and saved as message.txt.
+
+Conflict files are always created on the client and never on the server.
+
+Checksum Algorithm Negotiation
+------------------------------
+
+In ownCloud 10.0 we implemented a checksum feature which checks the file integrity on upload and download by computing a checksum after the file transfer finishes.
+The client queries the server capabilities after login to decide which checksum algorithm to use.
+Currently, SHA1 is hard-coded in the official server release and can't be changed by the end-user. 
+Note that the server additionally also supports MD5 and Adler-32, but the desktop client will always use the checksum algorithm announced in the capabilities:
+
+::
+
+  GET http://localhost:8000/ocs/v1.php/cloud/capabilities?format=json
+
+::
+
+  json
+  {
+     "ocs":{
+        "meta":{
+           "status":"ok",
+           "statuscode":100,
+           "message":"OK",
+           "totalitems":"",
+           "itemsperpage":""
+        },
+        "data":{
+           "version":{
+              "major":10,
+              "minor":0,
+              "micro":0,
+              "string":"10.0.0 beta",
+              "edition":"Community"
+           },
+           "capabilities":{
+              "core":{
+                 "pollinterval":60,
+                 "webdav-root":"remote.php/webdav"
+              },
+              "dav":{
+                 "chunking":"1.0"
+              },
+              "files_sharing":{
+                 "api_enabled":true,
+                 "public":{
+                    "enabled":true,
+                    "password":{
+                       "enforced":false
+                    },
+                    "expire_date":{
+                       "enabled":false
+                    },
+                    "send_mail":false,
+                    "upload":true
+                 },
+                 "user":{
+                    "send_mail":false
+                 },
+                 "resharing":true,
+                 "group_sharing":true,
+                 "federation":{
+                    "outgoing":true,
+                    "incoming":true
+                 }
+              },
+              "checksums":{
+                 "supportedTypes":[
+                    "SHA1"
+                 ],
+                 "preferredUploadType":"SHA1"
+              },
+              "files":{
+                 "bigfilechunking":true,
+                 "blacklisted_files":[
+                    ".htaccess"
+                 ],
+                 "undelete":true,
+                 "versioning":true
+              }
+           }
+        }
+     }
+  }
+
+Upload
+~~~~~~
+
+A checksum is calculated with the previously negotiated algorithm by the client and sent along with the file in an HTTP Header. 
+```OC-Checksum: [algorithm]:[checksum]```
+
+.. image:: ./images/checksums/client-activity.png
+
+During file upload, the server computes SHA1, MD5, and Adler-32 checksums and compares one of them to the checksum supplied by the client. 
+
+On mismatch, the server returns HTTP Status code 400 (Bad Request) thus signaling the client that the upload failed. 
+The server then discards the upload, and the client blacklists the file:
+
+.. image:: ./images/checksums/testing-checksums.png
+
+::
+
+  <?xml version='1.0' encoding='utf-8'?>
+  <d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">
+    <s:exception>Sabre\DAV\Exception\BadRequest</s:exception>
+    <s:message>The computed checksum does not match the one received from the
+  client.</s:message>
+  </d:error>
+
+The client retries the upload using exponential back-off. 
+On success (matching checksum) the computed checksums are stored by the server in ``oc_filecache`` alongside the file.
+
+Chunked Upload
+~~~~~~~~~~~~~~
+
+Mostly same as above. 
+The checksum of the full file is sent with every chunk of the file. 
+But the server only compares the checksum after receiving the checksum sent with the last chunk.
+
+Download
+~~~~~~~~
+
+The server sends the checksum in an HTTP header with the file. (same format as above).
+If no checksum is found in ``oc_filecache`` (freshly mounted external storage) it is computed and stored in ``oc_filecache`` on the first download. 
+The checksum is then provided on all subsequent downloads but not on the first. 
 
 .. _ignored-files-label:
 
 Ignored Files
 -------------
 
-The ownCloud Client supports the ability to exclude or ignore certain files
-from the synchronization process. Some system wide file patterns that are used
-to exclude or ignore files are included with the client by default and the
-ownCloud Client provides the ability to add custom patterns.
+The ownCloud Client supports the ability to exclude or ignore certain files from the synchronization process. 
+Some system wide file patterns that are used to exclude or ignore files are included with the client by default and the ownCloud Client provides the ability to add custom patterns.
 
 By default, the ownCloud Client ignores the following files:
 
 * Files matched by one of the patterns defined in the Ignored Files Editor
 * Files containing characters that do not work on certain file systems ``(`\, /, :, ?, *, ", >, <, |`)``.
-* Files starting with ``.csync_journal.db``, as these files are reserved for journalling.
+* Files starting with ``._sync_xxxxxxx.db`` and the old format ``.csync_journal.db``,  as these files are reserved for journalling.
 
 If a pattern selected using a checkbox in the `ignoredFilesEditor-label` (or if
 a line in the exclude file starts with the character ``]`` directly followed by
 the file pattern), files matching the pattern are considered *fleeting meta
-data*. These files are ignored and *removed* by the client if found in the
-synchronized folder. This is suitable for meta files created by some
-applications that have no sustainable meaning.
+data*. 
 
-If a pattern ends with the forwardslash (``/``) character, only directories are
-matched. The pattern is only applied for directory components of filenames
-selected using the checkbox.
+These files are ignored and *removed* by the client if found in the
+synchronized folder. 
+This is suitable for meta files created by some applications that have no sustainable meaning.
 
-To match filenames against the exclude patterns, the unix standard C library
-function fnmatch is used. This process checks the filename against the
-specified pattern using standard shell wildcard pattern matching. For more
-information, please refer to `The opengroup website
+If a pattern ends with the forward slash (``/``) character, only directories are matched. 
+The pattern is only applied for directory components of filenames selected using the checkbox.
+
+To match filenames against the exclude patterns, the UNIX standard C library
+function ``fnmatch`` is used. 
+This process checks the filename against the specified pattern using standard shell wildcard pattern matching. 
+For more information, please refer to `The opengroup website
 <http://pubs.opengroup.org/onlinepubs/009695399/utilities/xcu_chap02.html#tag_02_13_01>`_.
 
 The path that is checked is the relative path under the sync root directory.
@@ -199,12 +325,6 @@ the database by comparing the files and their modification times. This process
 ensures that both server and client are synchronized using the appropriate NTP
 time before restarting the client following a database removal.
 
-Pressing ``F5`` while in the Account Settings Dialog enables you to "reset" the
-journal. This function can be used to recreate the journal database.
-
-.. note:: We recommend that you use this function only when advised to do so by
-   ownCloud support staff.
-
 Custom WebDAV Properties
 ------------------------
 
@@ -212,9 +332,9 @@ In the communication between client and server a couple of custom WebDAV propert
 were introduced. They are either needed for sync functionality or help have a positive
 effect on synchronization performance.
 
-This chapter describes additional xml elements which the server returns in response
+This chapter describes additional XML elements which the server returns in response
 to a successful PROPFIND request on a file or directory. The elements are returned in
-the namespace oc.
+the namespace ``oc``.
 
 Server Side  Permissions
 ------------------------
@@ -223,27 +343,27 @@ The XML element ``<oc:permissions>`` represents the permission- and sharing stat
 item. It is a list of characters, and each of the chars has a meaning as outlined
 in the table below:
 
-+----+----------------+-------------------------------------------+
-|Code|   Resource     |  Description                              |
-+----+----------------+-------------------------------------------+
-| S  | File or Folder | is shared                                 |
-+----+----------------+-------------------------------------------+
-| R  | File or Folder | can share (includes reshare)              |
-+----+----------------+-------------------------------------------+
-| M  | File or Folder | is mounted (like on DropBox, Samba, etc.) |
-+----+----------------+-------------------------------------------+
-| W  | File           | can write file                            |
-+----+----------------+-------------------------------------------+
-| C  | Folder         |can create file in folder                  |
-+----+----------------+-------------------------------------------+
-| K  | Folder         | can create folder (mkdir)                 |
-+----+----------------+-------------------------------------------+
-| D  | File or Folder |can delete file or folder                  |
-+----+----------------+-------------------------------------------+
-| N  | File or Folder | can rename file or folder                 |
-+----+----------------+-------------------------------------------+
-| V  | File or Folder | can move file or folder                   |
-+----+----------------+-------------------------------------------+
++------+----------------+-------------------------------------------+
+| Code |   Resource     |  Description                              |
++------+----------------+-------------------------------------------+
+| S    | File or Folder | is shared                                 |
++------+----------------+-------------------------------------------+
+| R    | File or Folder | can share (includes re-share)             |
++------+----------------+-------------------------------------------+
+| M    | File or Folder | is mounted (like on Dropbox, Samba, etc.) |
++------+----------------+-------------------------------------------+
+| W    | File           | can write file                            |
++------+----------------+-------------------------------------------+
+| C    | Folder         | can create file in folder                 |
++------+----------------+-------------------------------------------+
+| K    | Folder         | can create folder (mkdir)                 |
++------+----------------+-------------------------------------------+
+| D    | File or Folder | can delete file or folder                 |
++------+----------------+-------------------------------------------+
+| N    | File or Folder | can rename file or folder                 |
++------+----------------+-------------------------------------------+
+| V    | File or Folder | can move file or folder                   |
++------+----------------+-------------------------------------------+
 
 
 Example:

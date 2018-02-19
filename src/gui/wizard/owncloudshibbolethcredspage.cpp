@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -22,35 +23,36 @@
 #include "creds/shibbolethcredentials.h"
 #include "creds/shibboleth/shibbolethwebview.h"
 
-namespace OCC
-{
+namespace OCC {
 
 OwncloudShibbolethCredsPage::OwncloudShibbolethCredsPage()
-    : AbstractCredentialsWizardPage(),
-      _browser(0),
-      _afterInitialSetup(false)
-{}
+    : AbstractCredentialsWizardPage()
+    , _browser(0)
+    , _afterInitialSetup(false)
+{
+}
 
 void OwncloudShibbolethCredsPage::setupBrowser()
 {
     if (!_browser.isNull()) {
         return;
     }
-    OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard*>(wizard());
+    OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
     AccountPtr account = ocWizard->account();
 
     // we need to reset the cookie jar to drop temporary cookies (like the shib cookie)
     // i.e. if someone presses "back"
     QNetworkAccessManager *qnam = account->networkAccessManager();
     CookieJar *jar = new CookieJar;
+    jar->restore(account->cookieJarPath());
     // Implicitly deletes the old cookie jar, and reparents the jar
     qnam->setCookieJar(jar);
 
     _browser = new ShibbolethWebView(account);
-    connect(_browser, SIGNAL(shibbolethCookieReceived(const QNetworkCookie&)),
-            this, SLOT(slotShibbolethCookieReceived(const QNetworkCookie&)), Qt::QueuedConnection);
-    connect(_browser, SIGNAL(rejected()),
-            this, SLOT(slotBrowserRejected()));
+    connect(_browser.data(), &ShibbolethWebView::shibbolethCookieReceived,
+        this, &OwncloudShibbolethCredsPage::slotShibbolethCookieReceived, Qt::QueuedConnection);
+    connect(_browser.data(), &ShibbolethWebView::rejected,
+        this, &OwncloudShibbolethCredsPage::slotBrowserRejected);
 
     _browser->move(ocWizard->x(), ocWizard->y());
     _browser->show();
@@ -82,7 +84,7 @@ void OwncloudShibbolethCredsPage::initializePage()
 
 int OwncloudShibbolethCredsPage::nextId() const
 {
-  return WizardCommon::Page_AdvancedSetup;
+    return WizardCommon::Page_AdvancedSetup;
 }
 
 void OwncloudShibbolethCredsPage::setConnected()
@@ -90,7 +92,7 @@ void OwncloudShibbolethCredsPage::setConnected()
     wizard()->show();
 }
 
-AbstractCredentials* OwncloudShibbolethCredsPage::getCredentials() const
+AbstractCredentials *OwncloudShibbolethCredsPage::getCredentials() const
 {
     return new ShibbolethCredentials(_cookie);
 }

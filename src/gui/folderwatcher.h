@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -17,6 +18,7 @@
 #include "config.h"
 
 #include <QList>
+#include <QLoggingCategory>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -28,6 +30,8 @@
 class QTimer;
 
 namespace OCC {
+
+Q_DECLARE_LOGGING_CATEGORY(lcFolderWatcher)
 
 class FolderWatcherPrivate;
 class Folder;
@@ -54,7 +58,7 @@ public:
     /**
      * @param root Path of the root of the folder
      */
-    FolderWatcher(const QString &root, Folder* folder = 0L);
+    FolderWatcher(const QString &root, Folder *folder = 0L);
     virtual ~FolderWatcher();
 
     /**
@@ -62,24 +66,40 @@ public:
      * Those need to be notified when a directory is added or removed while the watcher is disabled.
      * This is a no-op for backends that are recursive
      */
-    void addPath(const QString&);
-    void removePath(const QString&);
+    void addPath(const QString &);
+    void removePath(const QString &);
 
     /* Check if the path is ignored. */
-    bool pathIsIgnored( const QString& path );
+    bool pathIsIgnored(const QString &path);
+
+    /**
+     * Returns false if the folder watcher can't be trusted to capture all
+     * notifications.
+     *
+     * For example, this can happen on linux if the inotify user limit from
+     * /proc/sys/fs/inotify/max_user_watches is exceeded.
+     */
+    bool isReliable() const;
 
 signals:
     /** Emitted when one of the watched directories or one
      *  of the contained files is changed. */
     void pathChanged(const QString &path);
 
-    /** Emitted if an error occurs */
-    void error(const QString& error);
+    /**
+     * Emitted if some notifications were lost.
+     *
+     * Would happen, for example, if the number of pending notifications
+     * exceeded the allocated buffer size on Windows. Note that the folder
+     * watcher could still be able to capture all future notifications -
+     * i.e. isReliable() is orthogonal to losing changes occasionally.
+     */
+    void lostChanges();
 
 protected slots:
     // called from the implementations to indicate a change in path
-    void changeDetected( const QString& path);
-    void changeDetected( const QStringList& paths);
+    void changeDetected(const QString &path);
+    void changeDetected(const QStringList &paths);
 
 protected:
     QHash<QString, int> _pendingPathes;
@@ -88,11 +108,11 @@ private:
     QScopedPointer<FolderWatcherPrivate> _d;
     QTime _timer;
     QSet<QString> _lastPaths;
-    Folder* _folder;
+    Folder *_folder;
+    bool _isReliable = true;
 
     friend class FolderWatcherPrivate;
 };
-
 }
 
 #endif

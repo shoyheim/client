@@ -12,14 +12,14 @@ Desktop Sync client enables you to:
 Your files are always automatically synchronized between your ownCloud server 
 and local PC.
 
-Because of various technical issues, desktop sync clients older than 1.7 will 
+Because of various technical issues, desktop sync clients older than 2.2.1 will 
 not allowed to connect and sync with the ownCloud 8.1+ server. It is highly 
 recommended to keep your client updated.
 
 Improvements and New Features
 -----------------------------
 
-The 2.2 release of the ownCloud desktop sync client has many new features and 
+The |version| release of the ownCloud desktop sync client has many new features and 
 improvements. (See the `complete changelog 
 <https://owncloud.org/changelog/desktop/>`_.)
  
@@ -29,5 +29,5 @@ improvements. (See the `complete changelog
   * Improved user notifications about ignored files and conflicts
   * Add warnings for old server versions
   * Update of QtKeyChain to support Windows credential store
-  * Packaging of dolphin overlay icon module for bleeding edge distros
+  * Packaging of dolphin overlay icon module for bleeding edge distributions
   

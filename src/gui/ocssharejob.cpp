@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -14,17 +15,17 @@
 #include "ocssharejob.h"
 #include "networkjobs.h"
 #include "account.h"
-#include "json.h"
 
 #include <QBuffer>
+#include <QJsonDocument>
 
 namespace OCC {
 
 OcsShareJob::OcsShareJob(AccountPtr account)
-: OcsJob(account)
+    : OcsJob(account)
 {
     setPath("ocs/v1.php/apps/files_sharing/api/v1/shares");
-    connect(this, SIGNAL(jobFinished(QVariantMap)), this, SLOT(jobDone(QVariantMap)));
+    connect(this, &OcsJob::jobFinished, this, &OcsShareJob::jobDone);
 }
 
 void OcsShareJob::getShares(const QString &path)
@@ -83,8 +84,18 @@ void OcsShareJob::setPublicUpload(const QString &shareId, bool publicUpload)
     start();
 }
 
-void OcsShareJob::setPermissions(const QString &shareId, 
-                                 const Share::Permissions permissions)
+void OcsShareJob::setName(const QString &shareId, const QString &name)
+{
+    appendPath(shareId);
+    setVerb("PUT");
+    addParam(QString::fromLatin1("name"), name);
+    _value = name;
+
+    start();
+}
+
+void OcsShareJob::setPermissions(const QString &shareId,
+    const Share::Permissions permissions)
 {
     appendPath(shareId);
     setVerb("PUT");
@@ -95,14 +106,18 @@ void OcsShareJob::setPermissions(const QString &shareId,
     start();
 }
 
-void OcsShareJob::createLinkShare(const QString &path, 
-                                  const QString &password)
+void OcsShareJob::createLinkShare(const QString &path,
+    const QString &name,
+    const QString &password)
 {
     setVerb("POST");
 
     addParam(QString::fromLatin1("path"), path);
     addParam(QString::fromLatin1("shareType"), QString::number(Share::TypeLink));
 
+    if (!name.isEmpty()) {
+        addParam(QString::fromLatin1("name"), name);
+    }
     if (!password.isEmpty()) {
         addParam(QString::fromLatin1("password"), password);
     }
@@ -112,10 +127,10 @@ void OcsShareJob::createLinkShare(const QString &path,
     start();
 }
 
-void OcsShareJob::createShare(const QString& path, 
-                              const Share::ShareType shareType,
-                              const QString& shareWith,
-                              const Share::Permissions permissions)
+void OcsShareJob::createShare(const QString &path,
+    const Share::ShareType shareType,
+    const QString &shareWith,
+    const Share::Permissions permissions)
 {
     setVerb("POST");
 
@@ -136,9 +151,8 @@ void OcsShareJob::getSharedWithMe()
     start();
 }
 
-void OcsShareJob::jobDone(QVariantMap reply)
+void OcsShareJob::jobDone(QJsonDocument reply)
 {
     emit shareJobFinished(reply, _value);
 }
-
 }

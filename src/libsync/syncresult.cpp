@@ -13,19 +13,22 @@
  */
 
 #include "syncresult.h"
+#include "progressdispatcher.h"
 
-namespace OCC
-{
+namespace OCC {
 
 SyncResult::SyncResult()
-    : _status( Undefined ),
-      _warnCount(0)
-{
-}
+    : _status(Undefined)
+    , _foundFilesNotSynced(false)
+    , _folderStructureWasChanged(false)
+    , _numNewItems(0)
+    , _numRemovedItems(0)
+    , _numUpdatedItems(0)
+    , _numRenamedItems(0)
+    , _numNewConflictItems(0)
+    , _numOldConflictItems(0)
+    , _numErrorItems(0)
 
-SyncResult::SyncResult(SyncResult::Status status )
-    : _status(status),
-      _warnCount(0)
 {
 }
 
@@ -34,12 +37,17 @@ SyncResult::Status SyncResult::status() const
     return _status;
 }
 
+void SyncResult::reset()
+{
+    *this = SyncResult();
+}
+
 QString SyncResult::statusString() const
 {
     QString re;
     Status stat = status();
 
-    switch( stat ){
+    switch (stat) {
     case Undefined:
         re = QLatin1String("Undefined");
         break;
@@ -74,20 +82,10 @@ QString SyncResult::statusString() const
     return re;
 }
 
-void SyncResult::setStatus( Status stat )
+void SyncResult::setStatus(Status stat)
 {
     _status = stat;
-    _syncTime = QDateTime::currentDateTime();
-}
-
-void SyncResult::setSyncFileItemVector( const SyncFileItemVector& items )
-{
-    _syncItems = items;
-}
-
-SyncFileItemVector SyncResult::syncFileItemVector() const
-{
-    return _syncItems;
+    _syncTime = QDateTime::currentDateTimeUtc();
 }
 
 QDateTime SyncResult::syncTime() const
@@ -95,34 +93,20 @@ QDateTime SyncResult::syncTime() const
     return _syncTime;
 }
 
-void SyncResult::setWarnCount(int wc)
-{
-    _warnCount = wc;
-}
-
-int SyncResult::warnCount() const
-{
-    return _warnCount;
-}
-
-void SyncResult::setErrorStrings( const QStringList& list )
-{
-    _errors = list;
-}
-
 QStringList SyncResult::errorStrings() const
 {
     return _errors;
 }
 
-void SyncResult::setErrorString( const QString& err )
+void SyncResult::appendErrorString(const QString &err)
 {
-    _errors.append( err );
+    _errors.append(err);
 }
 
 QString SyncResult::errorString() const
 {
-    if( _errors.isEmpty() ) return QString::null;
+    if (_errors.isEmpty())
+        return QString();
     return _errors.first();
 }
 
@@ -131,7 +115,7 @@ void SyncResult::clearErrors()
     _errors.clear();
 }
 
-void SyncResult::setFolder(const QString& folder)
+void SyncResult::setFolder(const QString &folder)
 {
     _folder = folder;
 }
@@ -141,9 +125,72 @@ QString SyncResult::folder() const
     return _folder;
 }
 
-SyncResult::~SyncResult()
+void SyncResult::processCompletedItem(const SyncFileItemPtr &item)
 {
+    if (Progress::isWarningKind(item->_status)) {
+        // Count any error conditions, error strings will have priority anyway.
+        _foundFilesNotSynced = true;
+    }
 
+    if (item->isDirectory() && (item->_instruction == CSYNC_INSTRUCTION_NEW
+                                  || item->_instruction == CSYNC_INSTRUCTION_TYPE_CHANGE
+                                  || item->_instruction == CSYNC_INSTRUCTION_REMOVE
+                                  || item->_instruction == CSYNC_INSTRUCTION_RENAME)) {
+        _folderStructureWasChanged = true;
+    }
+
+    // Process the item to the gui
+    if (item->_status == SyncFileItem::FatalError || item->_status == SyncFileItem::NormalError) {
+        //: this displays an error string (%2) for a file %1
+        appendErrorString(QObject::tr("%1: %2").arg(item->_file, item->_errorString));
+        _numErrorItems++;
+        if (!_firstItemError) {
+            _firstItemError = item;
+        }
+    } else if (item->_status == SyncFileItem::Conflict) {
+        if (item->_instruction == CSYNC_INSTRUCTION_CONFLICT) {
+            _numNewConflictItems++;
+            if (!_firstNewConflictItem) {
+                _firstNewConflictItem = item;
+            }
+        } else {
+            _numOldConflictItems++;
+        }
+    } else {
+        if (!item->hasErrorStatus() && item->_status != SyncFileItem::FileIgnored && item->_direction == SyncFileItem::Down) {
+            switch (item->_instruction) {
+            case CSYNC_INSTRUCTION_NEW:
+            case CSYNC_INSTRUCTION_TYPE_CHANGE:
+                _numNewItems++;
+                if (!_firstItemNew)
+                    _firstItemNew = item;
+                break;
+            case CSYNC_INSTRUCTION_REMOVE:
+                _numRemovedItems++;
+                if (!_firstItemDeleted)
+                    _firstItemDeleted = item;
+                break;
+            case CSYNC_INSTRUCTION_SYNC:
+                _numUpdatedItems++;
+                if (!_firstItemUpdated)
+                    _firstItemUpdated = item;
+                break;
+            case CSYNC_INSTRUCTION_RENAME:
+                if (!_firstItemRenamed) {
+                    _firstItemRenamed = item;
+                }
+                _numRenamedItems++;
+                break;
+            default:
+                // nothing.
+                break;
+            }
+        } else if (item->_direction == SyncFileItem::None) {
+            if (item->_instruction == CSYNC_INSTRUCTION_IGNORE) {
+                _foundFilesNotSynced = true;
+            }
+        }
+    }
 }
 
 } // ns mirall

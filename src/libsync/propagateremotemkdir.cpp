@@ -15,50 +15,59 @@
 #include "propagateremotemkdir.h"
 #include "owncloudpropagator_p.h"
 #include "account.h"
-#include "syncjournalfilerecord.h"
+#include "common/syncjournalfilerecord.h"
 #include "propagateremotedelete.h"
+#include "common/asserts.h"
+
 #include <QFile>
+#include <QLoggingCategory>
 
 namespace OCC {
 
+Q_LOGGING_CATEGORY(lcPropagateRemoteMkdir, "sync.propagator.remotemkdir", QtInfoMsg)
+
 void PropagateRemoteMkdir::start()
 {
-    if (_propagator->_abortRequested.fetchAndAddRelaxed(0))
+    if (propagator()->_abortRequested.fetchAndAddRelaxed(0))
         return;
 
-    qDebug() << Q_FUNC_INFO << _item->_file;
+    qCDebug(lcPropagateRemoteMkdir) << _item->_file;
 
-    _propagator->_activeJobList.append(this);
+    propagator()->_activeJobList.append(this);
 
     if (!_deleteExisting) {
         return slotStartMkcolJob();
     }
 
-    _job = new DeleteJob(_propagator->account(),
-                         _propagator->_remoteFolder + _item->_file,
-                         this);
+    _job = new DeleteJob(propagator()->account(),
+        propagator()->_remoteFolder + _item->_file,
+        this);
     connect(_job, SIGNAL(finishedSignal()), SLOT(slotStartMkcolJob()));
     _job->start();
 }
 
 void PropagateRemoteMkdir::slotStartMkcolJob()
 {
-    if (_propagator->_abortRequested.fetchAndAddRelaxed(0))
+    if (propagator()->_abortRequested.fetchAndAddRelaxed(0))
         return;
 
-    qDebug() << Q_FUNC_INFO << _item->_file;
+    qCDebug(lcPropagateRemoteMkdir) << _item->_file;
 
-    _job = new MkColJob(_propagator->account(),
-                        _propagator->_remoteFolder + _item->_file,
-                        this);
+    _job = new MkColJob(propagator()->account(),
+        propagator()->_remoteFolder + _item->_file,
+        this);
     connect(_job, SIGNAL(finished(QNetworkReply::NetworkError)), this, SLOT(slotMkcolJobFinished()));
     _job->start();
 }
 
-void PropagateRemoteMkdir::abort()
+void PropagateRemoteMkdir::abort(PropagatorJob::AbortType abortType)
 {
-    if (_job &&  _job->reply())
+    if (_job && _job->reply())
         _job->reply()->abort();
+
+    if (abortType == AbortType::Asynchronous) {
+        emit abortFinished();
+    }
 }
 
 void PropagateRemoteMkdir::setDeleteExisting(bool enabled)
@@ -68,13 +77,9 @@ void PropagateRemoteMkdir::setDeleteExisting(bool enabled)
 
 void PropagateRemoteMkdir::slotMkcolJobFinished()
 {
-    _propagator->_activeJobList.removeOne(this);
+    propagator()->_activeJobList.removeOne(this);
 
-    Q_ASSERT(_job);
-
-    qDebug() << Q_FUNC_INFO << _job->reply()->request().url() << "FINISHED WITH STATUS"
-        << _job->reply()->error()
-        << (_job->reply()->error() == QNetworkReply::NoError ? QLatin1String("") : _job->reply()->errorString());
+    ASSERT(_job);
 
     QNetworkReply::NetworkError err = _job->reply()->error();
     _item->_httpErrorCode = _job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -83,23 +88,20 @@ void PropagateRemoteMkdir::slotMkcolJobFinished()
         // This happens when the directory already exists. Nothing to do.
     } else if (err != QNetworkReply::NoError) {
         SyncFileItem::Status status = classifyError(err, _item->_httpErrorCode,
-                                                    &_propagator->_anotherSyncNeeded);
-        auto errorString = _job->reply()->errorString();
-        if (_job->reply()->hasRawHeader("OC-ErrorString")) {
-            errorString = _job->reply()->rawHeader("OC-ErrorString");
-        }
-        done(status, errorString);
+            &propagator()->_anotherSyncNeeded);
+        done(status, _job->errorString());
         return;
     } else if (_item->_httpErrorCode != 201) {
         // Normally we expect "201 Created"
         // If it is not the case, it might be because of a proxy or gateway intercepting the request, so we must
         // throw an error.
-        done(SyncFileItem::NormalError, tr("Wrong HTTP code returned by server. Expected 201, but received \"%1 %2\".")
-            .arg(_item->_httpErrorCode).arg(_job->reply()->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString()));
+        done(SyncFileItem::NormalError,
+            tr("Wrong HTTP code returned by server. Expected 201, but received \"%1 %2\".")
+                .arg(_item->_httpErrorCode)
+                .arg(_job->reply()->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString()));
         return;
     }
 
-    _item->_requestDuration = _job->duration();
     _item->_responseTimeStamp = _job->responseTimestamp();
     _item->_fileId = _job->reply()->rawHeader("OC-FileId");
 
@@ -109,11 +111,12 @@ void PropagateRemoteMkdir::slotMkcolJobFinished()
         // So we must get the file id using a PROPFIND
         // This is required so that we can detect moves even if the folder is renamed on the server
         // while files are still uploading
-        _propagator->_activeJobList.append(this);
+        propagator()->_activeJobList.append(this);
         auto propfindJob = new PropfindJob(_job->account(), _job->path(), this);
-        propfindJob->setProperties(QList<QByteArray>() << "getetag" << "http://owncloud.org/ns:id");
-        QObject::connect(propfindJob, SIGNAL(result(QVariantMap)), this, SLOT(propfindResult(QVariantMap)));
-        QObject::connect(propfindJob, SIGNAL(finishedWithError()), this, SLOT(propfindError()));
+        propfindJob->setProperties(QList<QByteArray>() << "getetag"
+                                                       << "http://owncloud.org/ns:id");
+        QObject::connect(propfindJob, &PropfindJob::result, this, &PropagateRemoteMkdir::propfindResult);
+        QObject::connect(propfindJob, &PropfindJob::finishedWithError, this, &PropagateRemoteMkdir::propfindError);
         propfindJob->start();
         _job = propfindJob;
         return;
@@ -123,7 +126,7 @@ void PropagateRemoteMkdir::slotMkcolJobFinished()
 
 void PropagateRemoteMkdir::propfindResult(const QVariantMap &result)
 {
-    _propagator->_activeJobList.removeOne(this);
+    propagator()->_activeJobList.removeOne(this);
     if (result.contains("getetag")) {
         _item->_etag = result["getetag"].toByteArray();
     }
@@ -136,23 +139,19 @@ void PropagateRemoteMkdir::propfindResult(const QVariantMap &result)
 void PropagateRemoteMkdir::propfindError()
 {
     // ignore the PROPFIND error
-    _propagator->_activeJobList.removeOne(this);
+    propagator()->_activeJobList.removeOne(this);
     done(SyncFileItem::Success);
 }
 
 void PropagateRemoteMkdir::success()
 {
     // save the file id already so we can detect rename or remove
-    SyncJournalFileRecord record(*_item, _propagator->_localDir + _item->destination());
-    if (!_propagator->_journal->setFileRecord(record)) {
+    SyncJournalFileRecord record = _item->toSyncJournalFileRecordWithInode(propagator()->_localDir + _item->destination());
+    if (!propagator()->_journal->setFileRecord(record)) {
         done(SyncFileItem::FatalError, tr("Error writing metadata to the database"));
         return;
     }
 
     done(SyncFileItem::Success);
 }
-
-
-
 }
-

@@ -23,7 +23,7 @@
 
 #include "application.h"
 #include "theme.h"
-#include "utility.h"
+#include "common/utility.h"
 #include "cocoainitializer.h"
 
 #include "updater/updater.h"
@@ -36,11 +36,11 @@ using namespace OCC;
 void warnSystray()
 {
     QMessageBox::critical(0, qApp->translate("main.cpp", "System Tray not available"),
-                          qApp->translate("main.cpp", "%1 requires on a working system tray. "
-                                          "If you are running XFCE, please follow "
-                                          "<a href=\"http://docs.xfce.org/xfce/xfce4-panel/systray\">these instructions</a>. "
-                                          "Otherwise, please install a system tray application such as 'trayer' and try again.")
-                          .arg(Theme::instance()->appNameGUI()));
+        qApp->translate("main.cpp", "%1 requires on a working system tray. "
+                                    "If you are running XFCE, please follow "
+                                    "<a href=\"http://docs.xfce.org/xfce/xfce4-panel/systray\">these instructions</a>. "
+                                    "Otherwise, please install a system tray application such as 'trayer' and try again.")
+            .arg(Theme::instance()->appNameGUI()));
 }
 
 int main(int argc, char **argv)
@@ -48,19 +48,15 @@ int main(int argc, char **argv)
     Q_INIT_RESOURCE(client);
 
 #ifdef Q_OS_WIN
-    // If the font size ratio is set on Windows, we need to
-    // enable the auto pixelRatio in Qt since we don't
-    // want to use sizes relative to the font size everywhere.
-    // This is automatic on OS X, but opt-in on Windows and Linux
-    // https://doc-snapshots.qt.io/qt5-5.6/highdpi.html#qt-support
-    // We do not define it on linux so the behaviour is kept the same
-    // as other Qt apps in the desktop environment. (which may or may
-    // not set this envoronment variable)
-#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
+// If the font size ratio is set on Windows, we need to
+// enable the auto pixelRatio in Qt since we don't
+// want to use sizes relative to the font size everywhere.
+// This is automatic on OS X, but opt-in on Windows and Linux
+// https://doc-snapshots.qt.io/qt5-5.6/highdpi.html#qt-support
+// We do not define it on linux so the behaviour is kept the same
+// as other Qt apps in the desktop environment. (which may or may
+// not set this envoronment variable)
     qputenv("QT_AUTO_SCREEN_SCALE_FACTOR", "1");
-#else
-    qputenv("QT_DEVICE_PIXEL_RATIO", "auto"); // See #4840, #4994
-#endif
 #endif // !Q_OS_WIN
 
 #ifdef Q_OS_MAC
@@ -81,18 +77,18 @@ int main(int argc, char **argv)
 #ifndef Q_OS_WIN
     signal(SIGPIPE, SIG_IGN);
 #endif
-    if( app.giveHelp() ) {
+    if (app.giveHelp()) {
         app.showHelp();
         return 0;
     }
-    if( app.versionOnly() ) {
+    if (app.versionOnly()) {
         app.showVersion();
         return 0;
     }
 
-    // check a environment variable for core dumps
+// check a environment variable for core dumps
 #ifdef Q_OS_UNIX
-    if( !qgetenv("OWNCLOUD_CORE_DUMP").isEmpty() ) {
+    if (!qEnvironmentVariableIsEmpty("OWNCLOUD_CORE_DUMP")) {
         struct rlimit core_limit;
         core_limit.rlim_cur = RLIM_INFINITY;
         core_limit.rlim_max = RLIM_INFINITY;
@@ -100,42 +96,41 @@ int main(int argc, char **argv)
         if (setrlimit(RLIMIT_CORE, &core_limit) < 0) {
             fprintf(stderr, "Unable to set core dump limit\n");
         } else {
-            qDebug() << "Core dumps enabled";
+            qCInfo(lcApplication) << "Core dumps enabled";
         }
     }
 #endif
     // if handleStartup returns true, main()
     // needs to terminate here, e.g. because
     // the updater is triggered
-    if (Updater::instance()->handleStartup()) {
-        return true;
+    Updater *updater = Updater::instance();
+    if (updater && updater->handleStartup()) {
+        return 1;
     }
 
     // if the application is already running, notify it.
-    if(app.isRunning()) {
-        qDebug() << Q_FUNC_INFO << "Already running, exiting...";
+    if (app.isRunning()) {
+        qCInfo(lcApplication) << "Already running, exiting...";
         if (app.isSessionRestored()) {
             // This call is mirrored with the one in Application::slotParseMessage
-            qDebug() << "Session was restored, don't notify app!";
+            qCInfo(lcApplication) << "Session was restored, don't notify app!";
             return -1;
         }
 
         QStringList args = app.arguments();
         if (args.size() > 1) {
             QString msg = args.join(QLatin1String("|"));
-            if(!app.sendMessage(QLatin1String("MSG_PARSEOPTIONS:") + msg))
+            if (!app.sendMessage(QLatin1String("MSG_PARSEOPTIONS:") + msg))
                 return -1;
         }
-        if(!app.sendMessage(QLatin1String("MSG_SHOWSETTINGS"))) {
+        if (!app.sendMessage(QLatin1String("MSG_SHOWSETTINGS"))) {
             return -1;
         }
         return 0;
     }
-#if QT_VERSION > QT_VERSION_CHECK(5, 0, 0)
+    // We can't call isSystemTrayAvailable with appmenu-qt5 begause it hides the systemtray
+    // (issue #4693)
     if (qgetenv("QT_QPA_PLATFORMTHEME") != "appmenu-qt5")
-        // We can't call isSystemTrayAvailable with appmenu-qt5 begause it hides the systemtray
-        // (issue #4693)
-#endif
     {
         if (!QSystemTrayIcon::isSystemTrayAvailable()) {
             // If the systemtray is not there, we will wait one second for it to maybe start
@@ -152,7 +147,8 @@ int main(int argc, char **argv)
                     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
                         Utility::sleep(1);
                         attempts++;
-                        if (attempts < 30) continue;
+                        if (attempts < 30)
+                            continue;
                     } else {
                         break;
                     }
@@ -167,4 +163,3 @@ int main(int argc, char **argv)
 
     return app.exec();
 }
-

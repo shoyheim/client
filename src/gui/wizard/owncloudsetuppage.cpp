@@ -21,28 +21,27 @@
 #include <QMessageBox>
 #include <QSsl>
 #include <QSslCertificate>
+#include <QNetworkAccessManager>
 
 #include "QProgressIndicator.h"
 
 #include "wizard/owncloudwizardcommon.h"
 #include "wizard/owncloudsetuppage.h"
 #include "wizard/owncloudconnectionmethoddialog.h"
-#include "../3rdparty/certificates/p12topem.h"
 #include "theme.h"
 #include "account.h"
 
-namespace OCC
-{
+namespace OCC {
 
 OwncloudSetupPage::OwncloudSetupPage(QWidget *parent)
-  : QWizardPage(),
-    _ui(),
-    _oCUrl(),
-    _ocUser(),
-    _authTypeKnown(false),
-    _checking(false),
-    _authType(WizardCommon::HttpCreds),
-    _progressIndi(new QProgressIndicator (this))
+    : QWizardPage()
+    , _ui()
+    , _oCUrl()
+    , _ocUser()
+    , _authTypeKnown(false)
+    , _checking(false)
+    , _authType(DetermineAuthTypeJob::Basic)
+    , _progressIndi(new QProgressIndicator(this))
 {
     _ui.setupUi(this);
     _ocWizard = qobject_cast<OwncloudWizard *>(parent);
@@ -59,30 +58,29 @@ OwncloudSetupPage::OwncloudSetupPage(QWidget *parent)
     }
 
 
-    registerField( QLatin1String("OCUrl*"), _ui.leUrl );
+    registerField(QLatin1String("OCUrl*"), _ui.leUrl);
 
-    _ui.resultLayout->addWidget( _progressIndi );
+    _ui.resultLayout->addWidget(_progressIndi);
     stopSpinner();
 
     setupCustomization();
 
     slotUrlChanged(QLatin1String("")); // don't jitter UI
-    connect(_ui.leUrl, SIGNAL(textChanged(QString)), SLOT(slotUrlChanged(QString)));
-    connect(_ui.leUrl, SIGNAL(editingFinished()), SLOT(slotUrlEditFinished()));
+    connect(_ui.leUrl, &QLineEdit::textChanged, this, &OwncloudSetupPage::slotUrlChanged);
+    connect(_ui.leUrl, &QLineEdit::editingFinished, this, &OwncloudSetupPage::slotUrlEditFinished);
 
     addCertDial = new AddCertificateDialog(this);
-    connect(_ocWizard,SIGNAL(needCertificate()),this,SLOT(slotAskSSLClientCertificate()));
 }
 
-void OwncloudSetupPage::setServerUrl( const QString& newUrl )
+void OwncloudSetupPage::setServerUrl(const QString &newUrl)
 {
     _oCUrl = newUrl;
-    if( _oCUrl.isEmpty() ) {
+    if (_oCUrl.isEmpty()) {
         _ui.leUrl->clear();
         return;
     }
 
-    _ui.leUrl->setText( _oCUrl );
+    _ui.leUrl->setText(_oCUrl);
 }
 
 void OwncloudSetupPage::setupCustomization()
@@ -92,17 +90,17 @@ void OwncloudSetupPage::setupCustomization()
     _ui.bottomLabel->hide();
 
     Theme *theme = Theme::instance();
-    QVariant variant = theme->customMedia( Theme::oCSetupTop );
-    if( !variant.isNull() ) {
-        WizardCommon::setupCustomMedia( variant, _ui.topLabel );
+    QVariant variant = theme->customMedia(Theme::oCSetupTop);
+    if (!variant.isNull()) {
+        WizardCommon::setupCustomMedia(variant, _ui.topLabel);
     }
 
-    variant = theme->customMedia( Theme::oCSetupBottom );
-    WizardCommon::setupCustomMedia( variant, _ui.bottomLabel );
+    variant = theme->customMedia(Theme::oCSetupBottom);
+    WizardCommon::setupCustomMedia(variant, _ui.bottomLabel);
 }
 
 // slot hit from textChanged of the url entry field.
-void OwncloudSetupPage::slotUrlChanged(const QString& url)
+void OwncloudSetupPage::slotUrlChanged(const QString &url)
 {
     _authTypeKnown = false;
 
@@ -110,14 +108,14 @@ void OwncloudSetupPage::slotUrlChanged(const QString& url)
     if (url.endsWith("index.php")) {
         newUrl.chop(9);
     }
-    if( _ocWizard && _ocWizard->account() ) {
+    if (_ocWizard && _ocWizard->account()) {
         QString webDavPath = _ocWizard->account()->davPath();
         if (url.endsWith(webDavPath)) {
-            newUrl.chop( webDavPath.length() );
+            newUrl.chop(webDavPath.length());
         }
-        if( webDavPath.endsWith(QLatin1Char('/')) ) {
+        if (webDavPath.endsWith(QLatin1Char('/'))) {
             webDavPath.chop(1); // cut off the slash
-            if( url.endsWith(webDavPath)) {
+            if (url.endsWith(webDavPath)) {
                 newUrl.chop(webDavPath.length());
             }
         }
@@ -139,7 +137,7 @@ void OwncloudSetupPage::slotUrlChanged(const QString& url)
 void OwncloudSetupPage::slotUrlEditFinished()
 {
     QString url = _ui.leUrl->fullText();
-    if (QUrl(url).isRelative()) {
+    if (QUrl(url).isRelative() && !url.isEmpty()) {
         // no scheme defined, set one
         url.prepend("https://");
     }
@@ -156,10 +154,10 @@ void OwncloudSetupPage::initializePage()
     WizardCommon::initErrorLabel(_ui.errorLabel);
 
     _authTypeKnown = false;
-    _checking  = false;
+    _checking = false;
 
     QAbstractButton *nextButton = wizard()->button(QWizard::NextButton);
-    QPushButton *pushButton = qobject_cast<QPushButton*>(nextButton);
+    QPushButton *pushButton = qobject_cast<QPushButton *>(nextButton);
     if (pushButton)
         pushButton->setDefault(true);
 
@@ -182,19 +180,19 @@ bool OwncloudSetupPage::urlHasChanged()
     bool change = false;
     const QChar slash('/');
 
-    QUrl currentUrl( url() );
-    QUrl initialUrl( _oCUrl );
+    QUrl currentUrl(url());
+    QUrl initialUrl(_oCUrl);
 
     QString currentPath = currentUrl.path();
     QString initialPath = initialUrl.path();
 
     // add a trailing slash.
-    if( ! currentPath.endsWith( slash )) currentPath += slash;
-    if( ! initialPath.endsWith( slash )) initialPath += slash;
+    if (!currentPath.endsWith(slash))
+        currentPath += slash;
+    if (!initialPath.endsWith(slash))
+        initialPath += slash;
 
-    if( currentUrl.host() != initialUrl.host() ||
-        currentUrl.port() != initialUrl.port() ||
-            currentPath != initialPath ) {
+    if (currentUrl.host() != initialUrl.host() || currentUrl.port() != initialUrl.port() || currentPath != initialPath) {
         change = true;
     }
 
@@ -203,11 +201,15 @@ bool OwncloudSetupPage::urlHasChanged()
 
 int OwncloudSetupPage::nextId() const
 {
-    if (_authType == WizardCommon::HttpCreds) {
+    switch (_authType) {
+    case DetermineAuthTypeJob::Basic:
         return WizardCommon::Page_HttpCreds;
-    } else {
+    case DetermineAuthTypeJob::OAuth:
+        return WizardCommon::Page_OAuthCreds;
+    case DetermineAuthTypeJob::Shibboleth:
         return WizardCommon::Page_ShibbolethCreds;
     }
+    return WizardCommon::Page_HttpCreds;
 }
 
 QString OwncloudSetupPage::url() const
@@ -218,10 +220,10 @@ QString OwncloudSetupPage::url() const
 
 bool OwncloudSetupPage::validatePage()
 {
-    if( ! _authTypeKnown) {
-        setErrorString(QString::null, false);
+    if (!_authTypeKnown) {
+        setErrorString(QString(), false);
         _checking = true;
-        startSpinner ();
+        startSpinner();
         emit completeChanged();
 
         emit determineAuthType(url());
@@ -235,16 +237,16 @@ bool OwncloudSetupPage::validatePage()
     }
 }
 
-void OwncloudSetupPage::setAuthType (WizardCommon::AuthType type)
+void OwncloudSetupPage::setAuthType(DetermineAuthTypeJob::AuthType type)
 {
-  _authTypeKnown = true;
-  _authType = type;
-  stopSpinner();
+    _authTypeKnown = true;
+    _authType = type;
+    stopSpinner();
 }
 
-void OwncloudSetupPage::setErrorString( const QString& err, bool retryHTTPonly )
+void OwncloudSetupPage::setErrorString(const QString &err, bool retryHTTPonly)
 {
-    if( err.isEmpty()) {
+    if (err.isEmpty()) {
         _ui.errorLabel->setVisible(false);
     } else {
         if (retryHTTPonly) {
@@ -256,19 +258,19 @@ void OwncloudSetupPage::setErrorString( const QString& err, bool retryHTTPonly )
 
                 OwncloudConnectionMethodDialog dialog;
                 dialog.setUrl(url);
+                // FIXME: Synchronous dialogs are not so nice because of event loop recursion
                 int retVal = dialog.exec();
 
                 switch (retVal) {
-                case OwncloudConnectionMethodDialog::No_TLS:
-                    {
-                        url.setScheme("http");
-                        _ui.leUrl->setFullText(url.toString());
-                        // skip ahead to next page, since the user would expect us to retry automatically
-                        wizard()->next();
-                    }
-                    break;
+                case OwncloudConnectionMethodDialog::No_TLS: {
+                    url.setScheme("http");
+                    _ui.leUrl->setFullText(url.toString());
+                    // skip ahead to next page, since the user would expect us to retry automatically
+                    wizard()->next();
+                } break;
                 case OwncloudConnectionMethodDialog::Client_Side_TLS:
-                    slotAskSSLClientCertificate();
+                    addCertDial->show();
+                    connect(addCertDial, &QDialog::accepted, this, &OwncloudSetupPage::slotCertificateAccepted);
                     break;
                 case OwncloudConnectionMethodDialog::Closed:
                 case OwncloudConnectionMethodDialog::Back:
@@ -301,54 +303,46 @@ void OwncloudSetupPage::stopSpinner()
     _progressIndi->stopAnimation();
 }
 
-void OwncloudSetupPage::slotAskSSLClientCertificate()
+QString subjectInfoHelper(const QSslCertificate &cert, const QByteArray &qa)
 {
-    addCertDial->show();
-    connect(addCertDial, SIGNAL(accepted()),this,SLOT(slotCertificateAccepted()));
-}
-
-QString subjectInfoHelper(const QSslCertificate& cert, const QByteArray &qa)
-{
-#if QT_VERSION < QT_VERSION_CHECK(5,0,0)
-    return cert.subjectInfo(qa);
-#else
     return cert.subjectInfo(qa).join(QLatin1Char('/'));
-#endif
 }
 
 //called during the validation of the client certificate.
 void OwncloudSetupPage::slotCertificateAccepted()
 {
-    QSslCertificate sslCertificate;
-
-    resultP12ToPem certif = p12ToPem(addCertDial->getCertificatePath().toStdString() , addCertDial->getCertificatePasswd().toStdString());
-    if(certif.ReturnCode){
-        QString s = QString::fromStdString(certif.Certificate);
-        QByteArray ba = s.toLocal8Bit();
-
-        QList<QSslCertificate> sslCertificateList = QSslCertificate::fromData(ba, QSsl::Pem);
-        sslCertificate = sslCertificateList.takeAt(0);
-
-        _ocWizard->ownCloudCertificate = ba;
-        _ocWizard->ownCloudPrivateKey = certif.PrivateKey.c_str();
-        _ocWizard->ownCloudCertificatePath = addCertDial->getCertificatePath();
-        _ocWizard->ownCloudCertificatePasswd = addCertDial->getCertificatePasswd();
-
+    QList<QSslCertificate> clientCaCertificates;
+    QFile certFile(addCertDial->getCertificatePath());
+    certFile.open(QFile::ReadOnly);
+    if (QSslCertificate::importPkcs12(&certFile,
+            &_ocWizard->_clientSslKey, &_ocWizard->_clientSslCertificate,
+            &clientCaCertificates,
+            addCertDial->getCertificatePasswd().toLocal8Bit())) {
         AccountPtr acc = _ocWizard->account();
-        acc->setCertificate(_ocWizard->ownCloudCertificate, _ocWizard->ownCloudPrivateKey);
-        addCertDial->reinit();
+
+        // to re-create the session ticket because we added a key/cert
+        acc->setSslConfiguration(QSslConfiguration());
+        QSslConfiguration sslConfiguration = acc->getOrCreateSslConfig();
+
+        // We're stuffing the certificate into the configuration form here. Later the
+        // cert will come via the HttpCredentials
+        sslConfiguration.setLocalCertificate(_ocWizard->_clientSslCertificate);
+        sslConfiguration.setPrivateKey(_ocWizard->_clientSslKey);
+        acc->setSslConfiguration(sslConfiguration);
+
+        // Make sure TCP connections get re-established
+        acc->networkAccessManager()->clearAccessCache();
+
+        addCertDial->reinit(); // FIXME: Why not just have this only created on use?
         validatePage();
     } else {
-        QString message;
-        message = certif.Comment.c_str();
-        addCertDial->showErrorMessage(message);
+        addCertDial->showErrorMessage(tr("Could not load certificate. Maybe wrong password?"));
         addCertDial->show();
     }
 }
 
 OwncloudSetupPage::~OwncloudSetupPage()
 {
-    delete addCertDial;
 }
 
 } // namespace OCC

@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -30,7 +31,7 @@ namespace OCC {
 class AccountState;
 
 namespace Ui {
-class SettingsDialog;
+    class SettingsDialog;
 }
 class AccountSettings;
 class Application;
@@ -55,8 +56,12 @@ public:
 public slots:
     void showFirstPage();
     void showActivityPage();
+    void showIssuesList(const QString &folderAlias);
     void slotSwitchPage(QAction *action);
-    void slotRefreshActivity(AccountState *accountState );
+    void slotRefreshActivity(AccountState *accountState);
+    void slotRefreshActivityAccountStateSender();
+    void slotAccountAvatarChanged();
+    void slotAccountDisplayNameChanged();
 
 protected:
     void reject() Q_DECL_OVERRIDE;
@@ -72,20 +77,25 @@ private:
 
     QIcon createColorAwareIcon(const QString &name);
     QAction *createColorAwareAction(const QString &iconName, const QString &fileName);
-    Ui::SettingsDialog * const _ui;
+    QAction *createActionWithIcon(const QIcon &icon, const QString &text, const QString &iconPath = QString());
 
-    QActionGroup* _actionGroup;
+    Ui::SettingsDialog *const _ui;
+
+    QActionGroup *_actionGroup;
     // Maps the actions from the action group to the corresponding widgets
-    QHash<QAction*, QWidget*> _actionGroupWidgets;
+    QHash<QAction *, QWidget *> _actionGroupWidgets;
 
-    QToolBar* _toolBar;
+    // Maps the action in the dialog to their according account. Needed in
+    // case the account avatar changes
+    QHash<Account *, QAction *> _actionForAccount;
+
+    QToolBar *_toolBar;
 
     ActivitySettings *_activitySettings;
 
-    QAction * _activityAction;
+    QAction *_activityAction;
     ownCloudGui *_gui;
 };
-
 }
 
 #endif // SETTINGSDIALOG_H

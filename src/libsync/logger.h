@@ -22,19 +22,16 @@
 #include <QTextStream>
 #include <qmutex.h>
 
-#include "utility.h"
+#include "common/utility.h"
+#include "logger.h"
+#include "owncloudlib.h"
 
 namespace OCC {
 
-struct Log{
-  typedef enum{
-    Occ,
-    CSync
-  } Source;
-
-  QDateTime timeStamp;
-  Source source;
-  QString message;
+struct Log
+{
+    QDateTime timeStamp;
+    QString message;
 };
 
 /**
@@ -43,51 +40,54 @@ struct Log{
  */
 class OWNCLOUDSYNC_EXPORT Logger : public QObject
 {
-  Q_OBJECT
+    Q_OBJECT
 public:
+    bool isNoop() const;
+    void log(Log log);
+    void doLog(const QString &log);
 
-  bool isNoop() const;
-  void log(Log log);
-  void doLog(const QString &log);
+    static void mirallLog(const QString &message);
 
-  static void csyncLog( const QString& message );
-  static void mirallLog( const QString& message );
+    const QList<Log> &logs() const { return _logs; }
 
-  const QList<Log>& logs() const {return _logs;}
+    static Logger *instance();
 
-  static Logger* instance();
+    void postGuiLog(const QString &title, const QString &message);
+    void postOptionalGuiLog(const QString &title, const QString &message);
+    void postGuiMessage(const QString &title, const QString &message);
 
-  void postGuiLog(const QString& title, const QString& message);
-  void postOptionalGuiLog(const QString& title, const QString& message);
-  void postGuiMessage(const QString& title, const QString& message);
+    void setLogWindowActivated(bool activated);
+    void setLogFile(const QString &name);
+    void setLogExpire(int expire);
+    void setLogDir(const QString &dir);
+    void setLogFlush(bool flush);
 
-  void setLogFile( const QString & name );
-  void setLogExpire( int expire );
-  void setLogDir( const QString& dir );
-  void setLogFlush( bool flush );
+    bool logDebug() const { return _logDebug; }
+    void setLogDebug(bool debug);
 
 signals:
-  void newLog(const QString&);
-  void guiLog(const QString&, const QString&);
-  void guiMessage(const QString&, const QString&);
-  void optionalGuiLog(const QString&, const QString&);
+    void logWindowLog(const QString &);
+
+    void guiLog(const QString &, const QString &);
+    void guiMessage(const QString &, const QString &);
+    void optionalGuiLog(const QString &, const QString &);
 
 public slots:
-  void enterNextLogFile();
+    void enterNextLogFile();
 
 private:
-  Logger(QObject* parent=0);
-  ~Logger();
-  QList<Log> _logs;
-  bool       _showTime;
-  bool       _doLogging;
-  QFile       _logFile;
-  bool        _doFileFlush;
-  int         _logExpire;
-  QScopedPointer<QTextStream> _logstream;
-  QMutex      _mutex;
-  QString     _logDirectory;
-
+    Logger(QObject *parent = 0);
+    ~Logger();
+    QList<Log> _logs;
+    bool _showTime;
+    bool _logWindowActivated;
+    QFile _logFile;
+    bool _doFileFlush;
+    int _logExpire;
+    bool _logDebug;
+    QScopedPointer<QTextStream> _logstream;
+    QMutex _mutex;
+    QString _logDirectory;
 };
 
 } // namespace OCC

@@ -38,14 +38,14 @@ class OWNCLOUDSYNC_EXPORT Theme : public QObject
     Q_OBJECT
 public:
     enum CustomMediaType {
-        oCSetupTop,      // ownCloud connect page
+        oCSetupTop, // ownCloud connect page
         oCSetupSide,
         oCSetupBottom,
         oCSetupResultTop // ownCloud connect result page
     };
 
     /* returns a singleton instance. */
-    static Theme* instance();
+    static Theme *instance();
 
     ~Theme();
 
@@ -92,19 +92,19 @@ public:
     /**
       * the icon that is shown in the tray context menu left of the folder name
       */
-    virtual QIcon   trayFolderIcon( const QString& ) const;
+    virtual QIcon trayFolderIcon(const QString &) const;
 
     /**
       * get an sync state icon
       */
-    virtual QIcon   syncStateIcon( SyncResult::Status, bool sysTray = false ) const;
+    virtual QIcon syncStateIcon(SyncResult::Status, bool sysTray = false, bool sysTrayMenuVisible = false) const;
 
-    virtual QIcon   folderDisabledIcon() const;
-    virtual QIcon   folderOfflineIcon(bool systray = false) const;
-    virtual QIcon   applicationIcon() const = 0;
+    virtual QIcon folderDisabledIcon() const;
+    virtual QIcon folderOfflineIcon(bool sysTray = false, bool sysTrayMenuVisible = false) const;
+    virtual QIcon applicationIcon() const = 0;
 #endif
 
-    virtual QString statusHeaderText( SyncResult::Status ) const;
+    virtual QString statusHeaderText(SyncResult::Status) const;
     virtual QString version() const;
 
     /**
@@ -120,7 +120,7 @@ public:
     /**
     * URL to help file
     */
-    virtual QString helpUrl() const { return QString::null; }
+    virtual QString helpUrl() const { return QString(); }
 
     /**
      * Setting a value here will pre-define the server url.
@@ -149,10 +149,10 @@ public:
     /**
      * Override to encforce a particular locale, i.e. "de" or "pt_BR"
      */
-    virtual QString enforcedLocale() const { return QString::null; }
+    virtual QString enforcedLocale() const { return QString(); }
 
     /** colored, white or black */
-    QString systrayIconFlavor(bool mono) const;
+    QString systrayIconFlavor(bool mono, bool sysTrayMenuVisible = false) const;
 
 #ifndef TOKEN_AUTH_ONLY
     /**
@@ -160,7 +160,7 @@ public:
      * The default implementation will try to look up
      * :/client/theme/<type>.png
      */
-    virtual QVariant customMedia( CustomMediaType type );
+    virtual QVariant customMedia(CustomMediaType type);
 
     /** @return color for the setup wizard */
     virtual QColor wizardHeaderTitleColor() const;
@@ -202,6 +202,11 @@ public:
     bool systrayUseMonoIcons() const;
 
     /**
+     * Check if mono icons are available
+     */
+    bool monoIconsAvailable() const;
+
+    /**
      * @brief Where to check for new Updates.
      */
     virtual QString updateCheckUrl() const;
@@ -218,6 +223,17 @@ public:
      * Set -1 to never ask confirmation.  0 to ask confirmation for every folder.
      **/
     virtual qint64 newBigFolderSizeLimit() const;
+
+    /**
+     * Hide the checkbox that says "Ask for confirmation before synchronizing folders larger than X MB"
+     * in the account wizard
+     */
+    virtual bool wizardHideFolderSizeLimitCheckbox() const;
+    /**
+     * Hide the checkbox that says "Ask for confirmation before synchronizing external storages"
+     * in the account wizard
+     */
+    virtual bool wizardHideExternalStorageConfirmationCheckbox() const;
 
     /**
      * Alternative path on the server that provides access to the webdav capabilities
@@ -250,7 +266,9 @@ public:
      * @value UserIDEmail Wizard asks for an email as ID
      * @value UserIDCustom Specify string in \ref customUserID
      */
-    enum UserIDType { UserIDUserName = 0, UserIDEmail, UserIDCustom };
+    enum UserIDType { UserIDUserName = 0,
+        UserIDEmail,
+        UserIDCustom };
 
     /** @brief What to display as the userID (e.g. in the wizards)
      *
@@ -302,9 +320,25 @@ public:
      */
     virtual QString quotaBaseFolder() const;
 
+    /**
+     * The OAuth client_id, secret pair.
+     * Note that client that change these value cannot connect to un-branded owncloud servers.
+     */
+    virtual QString oauthClientId() const;
+    virtual QString oauthClientSecret() const;
+
+    /**
+     * @brief What should be output for the --version command line switch.
+     *
+     * By default, it's a combination of appName(), version(), the GIT SHA1 and some
+     * important dependency versions.
+     */
+    virtual QString versionSwitchOutput() const;
+
+
 protected:
 #ifndef TOKEN_AUTH_ONLY
-    QIcon themeIcon(const QString& name, bool sysTray = false) const;
+    QIcon themeIcon(const QString &name, bool sysTray = false, bool sysTrayMenuVisible = false) const;
 #endif
     Theme();
 
@@ -312,15 +346,14 @@ signals:
     void systrayUseMonoIconsChanged(bool);
 
 private:
-    Theme(Theme const&);
-    Theme& operator=(Theme const&);
+    Theme(Theme const &);
+    Theme &operator=(Theme const &);
 
-    static Theme* _instance;
+    static Theme *_instance;
     bool _mono;
 #ifndef TOKEN_AUTH_ONLY
     mutable QHash<QString, QIcon> _iconCache;
 #endif
 };
-
 }
 #endif // _THEME_H

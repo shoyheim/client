@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -14,7 +15,6 @@
 #include "sslbutton.h"
 #include "account.h"
 #include "accountstate.h"
-#include "utility.h"
 #include "theme.h"
 
 #include <QMenu>
@@ -26,30 +26,17 @@
 
 namespace OCC {
 
-SslButton::SslButton(QWidget *parent) :
-    QToolButton(parent)
+Q_LOGGING_CATEGORY(lcSsl, "gui.ssl", QtInfoMsg)
+
+SslButton::SslButton(QWidget *parent)
+    : QToolButton(parent)
 {
     setPopupMode(QToolButton::InstantPopup);
     setAutoRaise(true);
 
     _menu = new QMenu(this);
-    QObject::connect(_menu, SIGNAL(aboutToShow()),
-                     this, SLOT(slotUpdateMenu()));
-}
-
-QString SslButton::protoToString(QSsl::SslProtocol proto)
-{
-    switch(proto) {
-        break;
-    case QSsl::SslV2:
-        return QLatin1String("SSL v2");
-    case QSsl::SslV3:
-        return QLatin1String("SSL v3");
-    case QSsl::TlsV1:
-        return QLatin1String("TLS");
-    default:
-        return QString();
-    }
+    QObject::connect(_menu, &QMenu::aboutToShow,
+        this, &SslButton::slotUpdateMenu);
 }
 
 static QString addCertDetailsField(const QString &key, const QString &value)
@@ -57,19 +44,21 @@ static QString addCertDetailsField(const QString &key, const QString &value)
     if (value.isEmpty())
         return QString();
 
-    return QString::fromLatin1("<tr><td style=\"vertical-align: top;\"><b>%1</b></td><td style=\"vertical-align: bottom;\">%2</td></tr>").arg(key).arg(value);
+    return QLatin1String("<tr><td style=\"vertical-align: top;\"><b>") + key
+        + QLatin1String("</b></td><td style=\"vertical-align: bottom;\">") + value
+        + QLatin1String("</td></tr>");
 }
 
 
 // necessary indication only, not sufficient for primary validation!
 static bool isSelfSigned(const QSslCertificate &certificate)
 {
-    return certificate.issuerInfo(QSslCertificate::CommonName) == certificate.subjectInfo(QSslCertificate::CommonName) &&
-           certificate.issuerInfo(QSslCertificate::OrganizationalUnitName) == certificate.subjectInfo(QSslCertificate::OrganizationalUnitName);
+    return certificate.issuerInfo(QSslCertificate::CommonName) == certificate.subjectInfo(QSslCertificate::CommonName)
+        && certificate.issuerInfo(QSslCertificate::OrganizationalUnitName) == certificate.subjectInfo(QSslCertificate::OrganizationalUnitName);
 }
 
-QMenu* SslButton::buildCertMenu(QMenu *parent, const QSslCertificate& cert,
-                                const QList<QSslCertificate>& userApproved, int pos)
+QMenu *SslButton::buildCertMenu(QMenu *parent, const QSslCertificate &cert,
+    const QList<QSslCertificate> &userApproved, int pos)
 {
     QString cn = QStringList(cert.subjectInfo(QSslCertificate::CommonName)).join(QChar(';'));
     QString ou = QStringList(cert.subjectInfo(QSslCertificate::OrganizationalUnitName)).join(QChar(';'));
@@ -80,19 +69,15 @@ QMenu* SslButton::buildCertMenu(QMenu *parent, const QSslCertificate& cert,
     if (issuer.isEmpty())
         issuer = QStringList(cert.issuerInfo(QSslCertificate::OrganizationalUnitName)).join(QChar(';'));
     QString sha1 = Utility::formatFingerprint(cert.digest(QCryptographicHash::Sha1).toHex(), false);
-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
-    QString md5 = Utility::formatFingerprint(cert.digest(QCryptographicHash::Md5).toHex(), false);
-#else
     QByteArray sha265hash = cert.digest(QCryptographicHash::Sha256).toHex();
     QString sha256escaped =
-            Utility::escape(Utility::formatFingerprint(sha265hash.left(sha265hash.length()/2), false)) +
-            QLatin1String("<br/>") +
-            Utility::escape(Utility::formatFingerprint(sha265hash.mid(sha265hash.length()/2), false));
-#endif
+        Utility::escape(Utility::formatFingerprint(sha265hash.left(sha265hash.length() / 2), false))
+        + QLatin1String("<br/>")
+        + Utility::escape(Utility::formatFingerprint(sha265hash.mid(sha265hash.length() / 2), false));
     QString serial = QString::fromUtf8(cert.serialNumber());
     QString effectiveDate = cert.effectiveDate().date().toString();
     QString expiryDate = cert.expiryDate().date().toString();
-    QString sna = QStringList(cert.alternateSubjectNames().values()).join(" ");
+    QString sna = QStringList(cert.subjectAlternativeNames().values()).join(" ");
 
     QString details;
     QTextStream stream(&details);
@@ -103,8 +88,7 @@ QMenu* SslButton::buildCertMenu(QMenu *parent, const QSslCertificate& cert,
 
     stream << QLatin1String("<table>");
     stream << addCertDetailsField(tr("Common Name (CN):"), Utility::escape(cn));
-    stream << addCertDetailsField(tr("Subject Alternative Names:"), Utility::escape(sna)
-                                  .replace(" ", "<br/>"));
+    stream << addCertDetailsField(tr("Subject Alternative Names:"), Utility::escape(sna).replace(" ", "<br/>"));
     stream << addCertDetailsField(tr("Organization (O):"), Utility::escape(org));
     stream << addCertDetailsField(tr("Organizational Unit (OU):"), Utility::escape(ou));
     stream << addCertDetailsField(tr("State/Province:"), Utility::escape(state));
@@ -123,11 +107,8 @@ QMenu* SslButton::buildCertMenu(QMenu *parent, const QSslCertificate& cert,
     stream << tr("<h3>Fingerprints</h3>");
 
     stream << QLatin1String("<table>");
-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
-    stream << addCertDetailsField(tr("MD 5:"), Utility::escape(md5));
-#else
+
     stream << addCertDetailsField(tr("SHA-256:"), sha256escaped);
-#endif
     stream << addCertDetailsField(tr("SHA-1:"), Utility::escape(sha1));
     stream << QLatin1String("</table>");
 
@@ -138,7 +119,7 @@ QMenu* SslButton::buildCertMenu(QMenu *parent, const QSslCertificate& cert,
 
     QString txt;
     if (pos > 0) {
-        txt += QString(2*pos, ' ');
+        txt += QString(2 * pos, ' ');
         if (!Utility::isWindows()) {
             // doesn't seem to work reliably on Windows
             txt += QChar(0x21AA); // nicer '->' symbol
@@ -148,7 +129,7 @@ QMenu* SslButton::buildCertMenu(QMenu *parent, const QSslCertificate& cert,
 
     QString certId = cn.isEmpty() ? ou : cn;
 
-    if (QSslSocket::systemCaCertificates().contains(cert)) {
+    if (QSslConfiguration::systemCaCertificates().contains(cert)) {
         txt += certId;
     } else {
         if (isSelfSigned(cert)) {
@@ -161,7 +142,9 @@ QMenu* SslButton::buildCertMenu(QMenu *parent, const QSslCertificate& cert,
     // create label first
     QLabel *label = new QLabel(parent);
     label->setStyleSheet(QLatin1String("QLabel { padding: 8px; background-color: #fff; }"));
+    label->setTextFormat(Qt::RichText);
     label->setText(details);
+
     // plug label into widget action
     QWidgetAction *action = new QWidgetAction(parent);
     action->setDefaultWidget(label);
@@ -171,7 +154,6 @@ QMenu* SslButton::buildCertMenu(QMenu *parent, const QSslCertificate& cert,
     menu->addAction(action);
 
     return menu;
-
 }
 
 void SslButton::updateAccountState(AccountState *accountState)
@@ -197,7 +179,8 @@ void SslButton::updateAccountState(AccountState *accountState)
     }
 }
 
-void SslButton::slotUpdateMenu() {
+void SslButton::slotUpdateMenu()
+{
     _menu->clear();
 
     if (!_accountState) {
@@ -208,38 +191,38 @@ void SslButton::slotUpdateMenu() {
 
     if (account->url().scheme() == QLatin1String("https")) {
         QString sslVersion = account->_sessionCipher.protocolString()
-                + ", " + account->_sessionCipher.authenticationMethod()
-                + ", " + account->_sessionCipher.keyExchangeMethod()
-                + ", " + account->_sessionCipher.encryptionMethod();
+            + ", " + account->_sessionCipher.authenticationMethod()
+            + ", " + account->_sessionCipher.keyExchangeMethod()
+            + ", " + account->_sessionCipher.encryptionMethod();
         _menu->addAction(sslVersion)->setEnabled(false);
 
-#if QT_VERSION > QT_VERSION_CHECK(5, 2, 0)
         if (account->_sessionTicket.isEmpty()) {
             _menu->addAction(tr("No support for SSL session tickets/identifiers"))->setEnabled(false);
         }
-#endif
 
         QList<QSslCertificate> chain = account->_peerCertificateChain;
 
         if (chain.isEmpty()) {
-            qWarning() << "empty certificate chain";
+            qCWarning(lcSsl) << "Empty certificate chain";
             return;
         }
 
         _menu->addAction(tr("Certificate information:"))->setEnabled(false);
 
+        const auto systemCerts = QSslConfiguration::systemCaCertificates();
+
         QList<QSslCertificate> tmpChain;
-        foreach(QSslCertificate cert, chain) {
+        foreach (QSslCertificate cert, chain) {
             tmpChain << cert;
-            if (QSslSocket::systemCaCertificates().contains(cert))
+            if (systemCerts.contains(cert))
                 break;
         }
         chain = tmpChain;
 
         // find trust anchor (informational only, verification is done by QSslSocket!)
-        foreach(QSslCertificate rootCA, QSslSocket::systemCaCertificates()) {
-            if (rootCA.issuerInfo(QSslCertificate::CommonName) == chain.last().issuerInfo(QSslCertificate::CommonName) &&
-                    rootCA.issuerInfo(QSslCertificate::Organization) == chain.last().issuerInfo(QSslCertificate::Organization)) {
+        for (const QSslCertificate &rootCA : systemCerts) {
+            if (rootCA.issuerInfo(QSslCertificate::CommonName) == chain.last().issuerInfo(QSslCertificate::CommonName)
+                && rootCA.issuerInfo(QSslCertificate::Organization) == chain.last().issuerInfo(QSslCertificate::Organization)) {
                 chain.append(rootCA);
                 break;
             }

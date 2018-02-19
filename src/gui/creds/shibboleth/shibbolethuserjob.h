@@ -16,26 +16,27 @@
 
 #include <networkjobs.h>
 
-namespace OCC
-{
+class QJsonDocument;
+
+namespace OCC {
 
 /**
  * @brief Fetch the user name of the shibboleth connection
  * @ingroup gui
  */
-class ShibbolethUserJob : public JsonApiJob {
+class ShibbolethUserJob : public JsonApiJob
+{
     Q_OBJECT
 public:
-    explicit ShibbolethUserJob(AccountPtr account, QObject* parent = 0);
+    explicit ShibbolethUserJob(AccountPtr account, QObject *parent = 0);
 
 signals:
     // is always emitted when the job is finished.  user is empty in case of error.
     void userFetched(const QString &user);
 
 private slots:
-    void slotJsonReceived(const QVariantMap &, int statusCode);
+    void slotJsonReceived(const QJsonDocument &, int statusCode);
 };
 
 
 } // namespace OCC
-

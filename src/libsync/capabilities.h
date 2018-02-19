@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -27,18 +28,27 @@ namespace OCC {
  * server
  * @ingroup libsync
  */
-class OWNCLOUDSYNC_EXPORT Capabilities {
-
+class OWNCLOUDSYNC_EXPORT Capabilities
+{
 public:
     Capabilities(const QVariantMap &capabilities);
 
     bool shareAPI() const;
     bool sharePublicLink() const;
     bool sharePublicLinkAllowUpload() const;
+    bool sharePublicLinkSupportsUploadOnly() const;
     bool sharePublicLinkEnforcePassword() const;
     bool sharePublicLinkEnforceExpireDate() const;
-    int  sharePublicLinkExpireDateDays() const;
+    int sharePublicLinkExpireDateDays() const;
+    bool sharePublicLinkMultiple() const;
     bool shareResharing() const;
+    bool chunkingNg() const;
+
+    /// disable parallel upload in chunking
+    bool chunkingParallelUploadDisabled() const;
+
+    /// Whether the "privatelink" DAV property is available
+    bool privateLinkPropertyAvailable() const;
 
     /// returns true if the capabilities report notifications
     bool notificationsAvailable() const;
@@ -76,10 +86,44 @@ public:
      */
     QByteArray uploadChecksumType() const;
 
+    /**
+     * List of HTTP error codes should be guaranteed to eventually reset
+     * failing chunked uploads.
+     *
+     * The resetting works by tracking UploadInfo::errorCount.
+     *
+     * Note that other error codes than the ones listed here may reset the
+     * upload as well.
+     *
+     * Motivation: See #5344. They should always be reset on 412 (possibly
+     * checksum error), but broken servers may also require resets on
+     * unusual error codes such as 503.
+     *
+     * Path: dav/httpErrorCodesThatResetFailingChunkedUploads
+     * Default: []
+     * Example: [503, 500]
+     */
+    QList<int> httpErrorCodesThatResetFailingChunkedUploads() const;
+
+    /**
+     * Regex that, if contained in a filename, will result in it not being uploaded.
+     *
+     * For servers older than 8.1.0 it defaults to [\\:?*"<>|]
+     * For servers >= that version, it defaults to the empty regex (the server
+     * will indicate invalid characters through an upload error)
+     *
+     * Note that it just needs to be contained. The regex [ab] is contained in "car".
+     */
+    QString invalidFilenameRegex() const;
+
+    /**
+     * Whether conflict files should remain local (default) or should be uploaded.
+     */
+    bool uploadConflictFiles() const;
+
 private:
     QVariantMap _capabilities;
 };
-
 }
 
 #endif //CAPABILITIES_H

@@ -34,23 +34,6 @@ class AccountState;
 class OwncloudWizard;
 
 /**
- * @brief The DetermineAuthTypeJob class
- * @ingroup gui
- */
-class DetermineAuthTypeJob : public AbstractNetworkJob {
-    Q_OBJECT
-public:
-    explicit DetermineAuthTypeJob(AccountPtr account, QObject *parent = 0);
-    void start() Q_DECL_OVERRIDE;
-signals:
-    void authType(WizardCommon::AuthType);
-private slots:
-    bool finished() Q_DECL_OVERRIDE;
-private:
-    int _redirects;
-};
-
-/**
  * @brief The OwncloudSetupWizard class
  * @ingroup gui
  */
@@ -59,42 +42,48 @@ class OwncloudSetupWizard : public QObject
     Q_OBJECT
 public:
     /** Run the wizard */
-    static void runWizard(QObject *obj, const char* amember, QWidget *parent = 0 );
+    static void runWizard(QObject *obj, const char *amember, QWidget *parent = 0);
+    static bool bringWizardToFrontIfVisible();
 signals:
     // overall dialog close signal.
-    void ownCloudWizardDone( int );
+    void ownCloudWizardDone(int);
 
 private slots:
-    void slotDetermineAuthType(const QString&);
-    void slotOwnCloudFoundAuth(const QUrl&, const QVariantMap&);
-    void slotNoOwnCloudFoundAuth(QNetworkReply *reply);
-    void slotNoOwnCloudFoundAuthTimeout(const QUrl&url);
+    void slotCheckServer(const QString &);
+    void slotSystemProxyLookupDone(const QNetworkProxy &proxy);
 
-    void slotConnectToOCUrl(const QString&);
+    void slotFindServer();
+    void slotFindServerBehindRedirect();
+    void slotFoundServer(const QUrl &, const QJsonObject &);
+    void slotNoServerFound(QNetworkReply *reply);
+    void slotNoServerFoundTimeout(const QUrl &url);
+
+    void slotDetermineAuthType();
+
+    void slotConnectToOCUrl(const QString &);
     void slotAuthError();
 
-    void slotCreateLocalAndRemoteFolders(const QString&, const QString&);
-    void slotRemoteFolderExists(QNetworkReply*);
+    void slotCreateLocalAndRemoteFolders(const QString &, const QString &);
+    void slotRemoteFolderExists(QNetworkReply *);
     void slotCreateRemoteFolderFinished(QNetworkReply::NetworkError);
-    void slotAssistantFinished( int );
+    void slotAssistantFinished(int);
     void slotSkipFolderConfiguration();
 
 private:
-    explicit OwncloudSetupWizard(QObject *parent = 0 );
+    explicit OwncloudSetupWizard(QObject *parent = 0);
     ~OwncloudSetupWizard();
     void startWizard();
     void testOwnCloudConnect();
     void createRemoteFolder();
-    void finalizeSetup( bool );
+    void finalizeSetup(bool);
     bool ensureStartFromScratch(const QString &localFolder);
     AccountState *applyAccountChanges();
-    bool checkDowngradeAdvised(QNetworkReply* reply);
+    bool checkDowngradeAdvised(QNetworkReply *reply);
 
-    OwncloudWizard* _ocWizard;
+    OwncloudWizard *_ocWizard;
     QString _initLocalFolder;
     QString _remoteFolder;
 };
-
 }
 
 #endif // OWNCLOUDSETUPWIZARD_H

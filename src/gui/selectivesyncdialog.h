@@ -17,6 +17,8 @@
 #include <QTreeWidget>
 #include "accountfwd.h"
 
+#include "csync_exclude.h"
+
 class QTreeWidgetItem;
 class QTreeWidget;
 class QNetworkReply;
@@ -26,54 +28,71 @@ namespace OCC {
 class Folder;
 
 /**
- * @brief The SelectiveSyncTreeView class
+ * @brief The SelectiveSyncWidget contains a folder tree with labels
  * @ingroup gui
  */
-class SelectiveSyncTreeView : public QTreeWidget {
+class SelectiveSyncWidget : public QWidget
+{
     Q_OBJECT
 public:
-    explicit SelectiveSyncTreeView(AccountPtr account, QWidget* parent = 0);
+    explicit SelectiveSyncWidget(AccountPtr account, QWidget *parent = 0);
 
     /// Returns a list of blacklisted paths, each including the trailing /
-    QStringList createBlackList(QTreeWidgetItem* root = 0) const;
+    QStringList createBlackList(QTreeWidgetItem *root = 0) const;
+
+    /** Returns the oldBlackList passed into setFolderInfo(), except that
+     *  a "/" entry is expanded to all top-level folder names.
+     */
     QStringList oldBlackList() const;
 
     // Estimates the total size of checked items (recursively)
     qint64 estimatedSize(QTreeWidgetItem *root = 0);
-    void refreshFolders();
 
     // oldBlackList is a list of excluded paths, each including a trailing /
     void setFolderInfo(const QString &folderPath, const QString &rootName,
-                       const QStringList &oldBlackList = QStringList());
+        const QStringList &oldBlackList = QStringList());
 
     QSize sizeHint() const Q_DECL_OVERRIDE;
+
 private slots:
     void slotUpdateDirectories(QStringList);
     void slotItemExpanded(QTreeWidgetItem *);
-    void slotItemChanged(QTreeWidgetItem*,int);
-    void slotLscolFinishedWithError(QNetworkReply*);
+    void slotItemChanged(QTreeWidgetItem *, int);
+    void slotLscolFinishedWithError(QNetworkReply *);
+
 private:
-    void recursiveInsert(QTreeWidgetItem* parent, QStringList pathTrail, QString path, qint64 size);
+    void refreshFolders();
+    void recursiveInsert(QTreeWidgetItem *parent, QStringList pathTrail, QString path, qint64 size);
+
+    AccountPtr _account;
+
     QString _folderPath;
     QString _rootName;
     QStringList _oldBlackList;
+
     bool _inserting; // set to true when we are inserting new items on the list
-    AccountPtr _account;
     QLabel *_loading;
+
+    QTreeWidget *_folderTree;
+
+    // During account setup we want to filter out excluded folders from the
+    // view without having a Folder.SyncEngine.ExcludedFiles instance.
+    ExcludedFiles _excludedFiles;
 };
 
 /**
  * @brief The SelectiveSyncDialog class
  * @ingroup gui
  */
-class SelectiveSyncDialog : public QDialog {
+class SelectiveSyncDialog : public QDialog
+{
     Q_OBJECT
 public:
     // Dialog for a specific folder (used from the account settings button)
-    explicit SelectiveSyncDialog(AccountPtr account, Folder *folder, QWidget* parent = 0, Qt::WindowFlags f = 0);
+    explicit SelectiveSyncDialog(AccountPtr account, Folder *folder, QWidget *parent = 0, Qt::WindowFlags f = 0);
 
     // Dialog for the whole account (Used from the wizard)
-    explicit SelectiveSyncDialog(AccountPtr account, const QString &folder, const QStringList &blacklist, QWidget* parent = 0, Qt::WindowFlags f = 0);
+    explicit SelectiveSyncDialog(AccountPtr account, const QString &folder, const QStringList &blacklist, QWidget *parent = 0, Qt::WindowFlags f = 0);
 
     virtual void accept() Q_DECL_OVERRIDE;
 
@@ -84,13 +103,11 @@ public:
     qint64 estimatedSize();
 
 private:
+    void init(const AccountPtr &account);
 
-    void init(const AccountPtr &account, const QString &label);
-
-    SelectiveSyncTreeView *_treeView;
+    SelectiveSyncWidget *_selectiveSync;
 
     Folder *_folder;
     QPushButton *_okButton;
 };
-
 }

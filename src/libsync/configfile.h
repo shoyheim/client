@@ -16,12 +16,16 @@
 #define CONFIGFILE_H
 
 #include "owncloudlib.h"
+#include <memory>
 #include <QSharedPointer>
+#include <QSettings>
 #include <QString>
 #include <QVariant>
+#include <chrono>
 
 class QWidget;
 class QHeaderView;
+class ExcludedFiles;
 
 namespace OCC {
 
@@ -36,10 +40,10 @@ class OWNCLOUDSYNC_EXPORT ConfigFile
 public:
     ConfigFile();
 
-    enum Scope { UserScope, SystemScope };
+    enum Scope { UserScope,
+        SystemScope };
 
     QString configPath() const;
-    QString configPathWithAppName() const;
     QString configFile() const;
     QString excludeFile(Scope scope) const;
     static QString excludeFileFromSystem(); // doesn't access config dir
@@ -50,24 +54,31 @@ public:
 
     // the certs do not depend on a connection.
     QByteArray caCerts();
-    void setCaCerts( const QByteArray& );
+    void setCaCerts(const QByteArray &);
 
-    bool passwordStorageAllowed(const QString &connection = QString::null );
+    bool passwordStorageAllowed(const QString &connection = QString());
 
     // max count of lines in the log window
-    int  maxLogLines() const;
+    int maxLogLines() const;
     void setMaxLogLines(int);
 
     /* Server poll interval in milliseconds */
-    int remotePollInterval( const QString& connection = QString() ) const;
+    std::chrono::milliseconds remotePollInterval(const QString &connection = QString()) const;
     /* Set poll interval. Value in milliseconds has to be larger than 5000 */
-    void setRemotePollInterval(int interval, const QString& connection = QString() );
+    void setRemotePollInterval(std::chrono::milliseconds interval, const QString &connection = QString());
 
     /* Interval to check for new notifications */
-    quint64 notificationRefreshInterval(const QString& connection = QString()) const;
+    std::chrono::milliseconds notificationRefreshInterval(const QString &connection = QString()) const;
 
     /* Force sync interval, in milliseconds */
-    quint64 forceSyncInterval(const QString &connection = QString()) const;
+    std::chrono::milliseconds forceSyncInterval(const QString &connection = QString()) const;
+
+    /**
+     * Interval in milliseconds within which full local discovery is required
+     *
+     * Use -1 to disable regular full local discoveries.
+     */
+    std::chrono::milliseconds fullLocalDiscoveryInterval() const;
 
     bool monoIcons() const;
     void setMonoIcons(bool);
@@ -80,10 +91,10 @@ public:
 
     // proxy settings
     void setProxyType(int proxyType,
-                      const QString& host = QString(),
-                      int port = 0, bool needsAuth = false,
-                      const QString& user = QString(),
-                      const QString& pass = QString());
+        const QString &host = QString(),
+        int port = 0, bool needsAuth = false,
+        const QString &user = QString(),
+        const QString &pass = QString());
 
     int proxyType() const;
     QString proxyHostName() const;
@@ -91,7 +102,7 @@ public:
     bool proxyNeedsAuth() const;
     QString proxyUser() const;
     QString proxyPassword() const;
-    
+
     /** 0: no limit, 1: manual, >0: automatic */
     int useUploadLimit() const;
     int useDownloadLimit() const;
@@ -105,51 +116,69 @@ public:
     /** [checked, size in MB] **/
     QPair<bool, quint64> newBigFolderSizeLimit() const;
     void setNewBigFolderSizeLimit(bool isChecked, quint64 mbytes);
+    bool confirmExternalStorage() const;
+    void setConfirmExternalStorage(bool);
+
+    /** If we should move the files deleted on the server in the trash  */
+    bool moveToTrash() const;
+    void setMoveToTrash(bool);
 
     static bool setConfDir(const QString &value);
 
     bool optionalDesktopNotifications() const;
     void setOptionalDesktopNotifications(bool show);
 
+    bool showInExplorerNavigationPane() const;
+    void setShowInExplorerNavigationPane(bool show);
+
     int timeout() const;
     quint64 chunkSize() const;
+    quint64 maxChunkSize() const;
+    quint64 minChunkSize() const;
+    std::chrono::milliseconds targetChunkUploadDuration() const;
 
     void saveGeometry(QWidget *w);
     void restoreGeometry(QWidget *w);
 
-    // how often the check about new versions runs, default two hours
-    int updateCheckInterval( const QString& connection = QString() ) const;
+    // how often the check about new versions runs
+    std::chrono::milliseconds updateCheckInterval(const QString &connection = QString()) const;
 
-    bool skipUpdateCheck( const QString& connection = QString() ) const;
-    void setSkipUpdateCheck( bool, const QString& );
+    bool skipUpdateCheck(const QString &connection = QString()) const;
+    void setSkipUpdateCheck(bool, const QString &);
 
     void saveGeometryHeader(QHeaderView *header);
     void restoreGeometryHeader(QHeaderView *header);
 
     QString certificatePath() const;
-    void setCertificatePath(const QString& cPath);
+    void setCertificatePath(const QString &cPath);
     QString certificatePasswd() const;
-    void setCertificatePasswd(const QString& cPasswd);
+    void setCertificatePasswd(const QString &cPasswd);
+
+    /**  Returns a new settings pre-set in a specific group.  The Settings will be created
+         with the given parent. If no parent is specified, the caller must destroy the settings */
+    static std::unique_ptr<QSettings> settingsWithGroup(const QString &group, QObject *parent = 0);
+
+    /// Add the system and user exclude file path to the ExcludedFiles instance.
+    static void setupDefaultExcludeFilePaths(ExcludedFiles &excludedFiles);
 
 protected:
-    QVariant getPolicySetting(const QString& policy, const QVariant& defaultValue = QVariant()) const;
-    void storeData(const QString& group, const QString& key, const QVariant& value);
-    QVariant retrieveData(const QString& group, const QString& key) const;
-    void removeData(const QString& group, const QString& key);
-    bool dataExists(const QString& group, const QString& key) const;
+    QVariant getPolicySetting(const QString &policy, const QVariant &defaultValue = QVariant()) const;
+    void storeData(const QString &group, const QString &key, const QVariant &value);
+    QVariant retrieveData(const QString &group, const QString &key) const;
+    void removeData(const QString &group, const QString &key);
+    bool dataExists(const QString &group, const QString &key) const;
 
 private:
-    QVariant getValue(const QString& param, const QString& group = QString::null,
-                      const QVariant& defaultValue = QVariant()) const;
-    void setValue(const QString& key, const QVariant &value);
+    QVariant getValue(const QString &param, const QString &group = QString(),
+        const QVariant &defaultValue = QVariant()) const;
+    void setValue(const QString &key, const QVariant &value);
 
 private:
-    typedef QSharedPointer< AbstractCredentials > SharedCreds;
+    typedef QSharedPointer<AbstractCredentials> SharedCreds;
 
-    static bool    _askedUser;
+    static bool _askedUser;
     static QString _oCVersion;
     static QString _confDir;
 };
-
 }
 #endif // CONFIGFILE_H

@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -14,14 +15,20 @@
 #include "sharee.h"
 #include "ocsshareejob.h"
 
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
+
 namespace OCC {
 
+Q_LOGGING_CATEGORY(lcSharing, "gui.sharing", QtInfoMsg)
+
 Sharee::Sharee(const QString shareWith,
-               const QString displayName,
-               const Type type)
-: _shareWith(shareWith),
-  _displayName(displayName),
-  _type(type)
+    const QString displayName,
+    const Type type)
+    : _shareWith(shareWith)
+    , _displayName(displayName)
+    , _type(type)
 {
 }
 
@@ -54,70 +61,72 @@ Sharee::Type Sharee::type() const
 }
 
 ShareeModel::ShareeModel(const AccountPtr &account, const QString &type, QObject *parent)
-    : QAbstractListModel(parent), _account(account), _type(type)
-{ }
+    : QAbstractListModel(parent)
+    , _account(account)
+    , _type(type)
+{
+}
 
 void ShareeModel::fetch(const QString &search, const ShareeSet &blacklist)
 {
     _search = search;
     _shareeBlacklist = blacklist;
     OcsShareeJob *job = new OcsShareeJob(_account);
-    connect(job, SIGNAL(shareeJobFinished(QVariantMap)), SLOT(shareesFetched(QVariantMap)));
-    connect(job, SIGNAL(ocsError(int,QString)), SIGNAL(displayErrorMessage(int,QString)));
+    connect(job, &OcsShareeJob::shareeJobFinished, this, &ShareeModel::shareesFetched);
+    connect(job, &OcsJob::ocsError, this, &ShareeModel::displayErrorMessage);
     job->getSharees(_search, _type, 1, 50);
 }
 
-void ShareeModel::shareesFetched(const QVariantMap &reply)
+void ShareeModel::shareesFetched(const QJsonDocument &reply)
 {
-    auto data = reply.value("ocs").toMap().value("data").toMap();
+    auto data = reply.object().value("ocs").toObject().value("data").toObject();
 
     QVector<QSharedPointer<Sharee>> newSharees;
 
     /*
      * Todo properly loop all of this
      */
-    auto exact = data.value("exact").toMap();
+    auto exact = data.value("exact").toObject();
     {
-        auto users = exact.value("users").toList();
-        foreach(auto user, users) {
-            newSharees.append(parseSharee(user.toMap()));
+        auto users = exact.value("users").toArray();
+        foreach (auto user, users) {
+            newSharees.append(parseSharee(user.toObject()));
         }
-        auto groups = exact.value("groups").toList();
-        foreach(auto group, groups) {
-            newSharees.append(parseSharee(group.toMap()));
+        auto groups = exact.value("groups").toArray();
+        foreach (auto group, groups) {
+            newSharees.append(parseSharee(group.toObject()));
         }
-        auto remotes = exact.value("remotes").toList();
-        foreach(auto remote, remotes) {
-            newSharees.append(parseSharee(remote.toMap()));
+        auto remotes = exact.value("remotes").toArray();
+        foreach (auto remote, remotes) {
+            newSharees.append(parseSharee(remote.toObject()));
         }
     }
 
     {
-        auto users = data.value("users").toList();
-        foreach(auto user, users) {
-            newSharees.append(parseSharee(user.toMap()));
+        auto users = data.value("users").toArray();
+        foreach (auto user, users) {
+            newSharees.append(parseSharee(user.toObject()));
         }
     }
     {
-        auto groups = data.value("groups").toList();
-        foreach(auto group, groups) {
-            newSharees.append(parseSharee(group.toMap()));
+        auto groups = data.value("groups").toArray();
+        foreach (auto group, groups) {
+            newSharees.append(parseSharee(group.toObject()));
         }
     }
     {
-        auto remotes = data.value("remotes").toList();
-        foreach(auto remote, remotes) {
-            newSharees.append(parseSharee(remote.toMap()));
+        auto remotes = data.value("remotes").toArray();
+        foreach (auto remote, remotes) {
+            newSharees.append(parseSharee(remote.toObject()));
         }
     }
 
     // Filter sharees that we have already shared with
     QVector<QSharedPointer<Sharee>> filteredSharees;
-    foreach(const auto &sharee, newSharees) {
+    foreach (const auto &sharee, newSharees) {
         bool found = false;
-        foreach(const auto &blacklistSharee, _shareeBlacklist) {
-            if (sharee->type() == blacklistSharee->type() &&
-                sharee->shareWith() == blacklistSharee->shareWith()) {
+        foreach (const auto &blacklistSharee, _shareeBlacklist) {
+            if (sharee->type() == blacklistSharee->type() && sharee->shareWith() == blacklistSharee->shareWith()) {
                 found = true;
                 break;
             }
@@ -132,11 +141,11 @@ void ShareeModel::shareesFetched(const QVariantMap &reply)
     shareesReady();
 }
 
-QSharedPointer<Sharee> ShareeModel::parseSharee(const QVariantMap &data)
+QSharedPointer<Sharee> ShareeModel::parseSharee(const QJsonObject &data)
 {
     const QString displayName = data.value("label").toString();
-    const QString shareWith = data.value("value").toMap().value("shareWith").toString();
-    Sharee::Type type = (Sharee::Type)data.value("value").toMap().value("shareType").toInt();
+    const QString shareWith = data.value("value").toObject().value("shareWith").toString();
+    Sharee::Type type = (Sharee::Type)data.value("value").toObject().value("shareType").toInt();
 
     return QSharedPointer<Sharee>(new Sharee(shareWith, displayName, type));
 }
@@ -144,11 +153,15 @@ QSharedPointer<Sharee> ShareeModel::parseSharee(const QVariantMap &data)
 
 // Helper function for setNewSharees   (could be a lambda when we can use them)
 static QSharedPointer<Sharee> shareeFromModelIndex(const QModelIndex &idx)
-{ return idx.data(Qt::UserRole).value<QSharedPointer<Sharee>>(); }
+{
+    return idx.data(Qt::UserRole).value<QSharedPointer<Sharee>>();
+}
 
-struct FindShareeHelper {
+struct FindShareeHelper
+{
     const QSharedPointer<Sharee> &sharee;
-    bool operator()(const QSharedPointer<Sharee> &s2) const {
+    bool operator()(const QSharedPointer<Sharee> &s2) const
+    {
         return s2->format() == sharee->format() && s2->displayName() == sharee->format();
     }
 };
@@ -157,7 +170,7 @@ struct FindShareeHelper {
 
     Do that while preserving the model index so the selection stays
 */
-void ShareeModel::setNewSharees(const QVector<QSharedPointer<Sharee>>& newSharees)
+void ShareeModel::setNewSharees(const QVector<QSharedPointer<Sharee>> &newSharees)
 {
     layoutAboutToBeChanged();
     const auto persistent = persistentIndexList();
@@ -165,13 +178,13 @@ void ShareeModel::setNewSharees(const QVector<QSharedPointer<Sharee>>& newSharee
     oldPersistantSharee.reserve(persistent.size());
 
     std::transform(persistent.begin(), persistent.end(), std::back_inserter(oldPersistantSharee),
-                   shareeFromModelIndex);
+        shareeFromModelIndex);
 
     _sharees = newSharees;
 
     QModelIndexList newPersistant;
     newPersistant.reserve(persistent.size());
-    foreach(const QSharedPointer<Sharee> &sharee, oldPersistantSharee) {
+    foreach (const QSharedPointer<Sharee> &sharee, oldPersistantSharee) {
         FindShareeHelper helper = { sharee };
         auto it = std::find_if(_sharees.constBegin(), _sharees.constEnd(), helper);
         if (it == _sharees.constEnd()) {
@@ -197,7 +210,7 @@ QVariant ShareeModel::data(const QModelIndex &index, int role) const
         return QVariant();
     }
 
-    const auto & sharee = _sharees.at(index.row());
+    const auto &sharee = _sharees.at(index.row());
     if (role == Qt::DisplayRole) {
         return sharee->format();
 
@@ -211,16 +224,16 @@ QVariant ShareeModel::data(const QModelIndex &index, int role) const
     } else if (role == Qt::UserRole) {
         return QVariant::fromValue(sharee);
     }
-    
+
     return QVariant();
 }
 
-QSharedPointer<Sharee> ShareeModel::getSharee(int at) {
+QSharedPointer<Sharee> ShareeModel::getSharee(int at)
+{
     if (at < 0 || at > _sharees.size()) {
         return QSharedPointer<Sharee>(NULL);
     }
 
     return _sharees.at(at);
 }
-
 }

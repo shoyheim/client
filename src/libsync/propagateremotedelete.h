@@ -22,16 +22,16 @@ namespace OCC {
  * @brief The DeleteJob class
  * @ingroup libsync
  */
-class DeleteJob : public AbstractNetworkJob {
+class DeleteJob : public AbstractNetworkJob
+{
     Q_OBJECT
+    QUrl _url; // Only used if the constructor taking a url is taken.
 public:
-    explicit DeleteJob(AccountPtr account, const QString& path, QObject* parent = 0);
+    explicit DeleteJob(AccountPtr account, const QString &path, QObject *parent = 0);
+    explicit DeleteJob(AccountPtr account, const QUrl &url, QObject *parent = 0);
 
     void start() Q_DECL_OVERRIDE;
     bool finished() Q_DECL_OVERRIDE;
-
-    QString errorString();
-    bool timedOut() { return _timedout; }
 
 signals:
     void finishedSignal();
@@ -41,20 +41,22 @@ signals:
  * @brief The PropagateRemoteDelete class
  * @ingroup libsync
  */
-class PropagateRemoteDelete : public PropagateItemJob {
+class PropagateRemoteDelete : public PropagateItemJob
+{
     Q_OBJECT
     QPointer<DeleteJob> _job;
-public:
-    PropagateRemoteDelete (OwncloudPropagator* propagator,const SyncFileItemPtr& item)
-        : PropagateItemJob(propagator, item) {}
-    void start() Q_DECL_OVERRIDE;
-    void abort() Q_DECL_OVERRIDE;
 
-    bool isLikelyFinishedQuickly() Q_DECL_OVERRIDE { return !_item->_isDirectory; }
+public:
+    PropagateRemoteDelete(OwncloudPropagator *propagator, const SyncFileItemPtr &item)
+        : PropagateItemJob(propagator, item)
+    {
+    }
+    void start() Q_DECL_OVERRIDE;
+    void abort(PropagatorJob::AbortType abortType) Q_DECL_OVERRIDE;
+
+    bool isLikelyFinishedQuickly() Q_DECL_OVERRIDE { return !_item->isDirectory(); }
 
 private slots:
     void slotDeleteJobFinished();
-
 };
-
 }

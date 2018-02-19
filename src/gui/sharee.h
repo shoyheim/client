@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -17,6 +18,7 @@
 #include <QObject>
 #include <QFlags>
 #include <QAbstractListModel>
+#include <QLoggingCategory>
 #include <QModelIndex>
 #include <QVariant>
 #include <QSharedPointer>
@@ -24,11 +26,16 @@
 
 #include "accountfwd.h"
 
+class QJsonDocument;
+class QJsonObject;
+
 namespace OCC {
 
-class Sharee {
+Q_DECLARE_LOGGING_CATEGORY(lcSharing)
+
+class Sharee
+{
 public:
-    
     // Keep in sync with Share::ShareType
     enum Type {
         User = 0,
@@ -37,8 +44,8 @@ public:
     };
 
     explicit Sharee(const QString shareWith,
-                    const QString displayName,
-                    const Type type);
+        const QString displayName,
+        const Type type);
 
     QString format() const;
     QString shareWith() const;
@@ -52,7 +59,8 @@ private:
 };
 
 
-class ShareeModel : public QAbstractListModel {
+class ShareeModel : public QAbstractListModel
+{
     Q_OBJECT
 public:
     explicit ShareeModel(const AccountPtr &account, const QString &type, QObject *parent = 0);
@@ -71,10 +79,10 @@ signals:
     void displayErrorMessage(int code, const QString &);
 
 private slots:
-    void shareesFetched(const QVariantMap &reply);
+    void shareesFetched(const QJsonDocument &reply);
 
 private:
-    QSharedPointer<Sharee> parseSharee(const QVariantMap &data);
+    QSharedPointer<Sharee> parseSharee(const QJsonObject &data);
     void setNewSharees(const QVector<QSharedPointer<Sharee>> &newSharees);
 
     AccountPtr _account;
@@ -84,9 +92,8 @@ private:
     QVector<QSharedPointer<Sharee>> _sharees;
     QVector<QSharedPointer<Sharee>> _shareeBlacklist;
 };
-
 }
 
 Q_DECLARE_METATYPE(QSharedPointer<OCC::Sharee>)
 
-#endif  //SHAREE_H
+#endif //SHAREE_H

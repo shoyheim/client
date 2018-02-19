@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -34,11 +35,11 @@ class NotificationWidget;
  * All the communication logic is handled in this class.
  *
  */
-class NotificationConfirmJob : public AbstractNetworkJob {
+class NotificationConfirmJob : public AbstractNetworkJob
+{
     Q_OBJECT
 
 public:
-
     explicit NotificationConfirmJob(AccountPtr account);
 
     /**
@@ -46,7 +47,7 @@ public:
      *
      * @param verb currently supported GET PUT POST DELETE
      */
-    void setLinkAndVerb(const QUrl& link, const QByteArray &verb);
+    void setLinkAndVerb(const QUrl &link, const QByteArray &verb);
 
     /**
      * @brief Start the OCS request
@@ -58,7 +59,7 @@ public:
      *        it when the job has finished
      * @param widget pointer to the notification widget to store
      */
-    void setWidget( NotificationWidget *widget );
+    void setWidget(NotificationWidget *widget);
 
     /**
      * @brief widget - get the associated notification widget as stored
@@ -84,7 +85,6 @@ private:
     QUrl _link;
     NotificationWidget *_widget;
 };
-
 }
 
 #endif // NotificationConfirmJob_H

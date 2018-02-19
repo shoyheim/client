@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -14,16 +15,23 @@
 #ifndef UPDATER_H
 #define UPDATER_H
 
+#include <QLoggingCategory>
 #include <QObject>
 
 class QUrl;
+class QUrlQuery;
 
 namespace OCC {
 
-class Updater {
+Q_DECLARE_LOGGING_CATEGORY(lcUpdater)
+
+class Updater : public QObject
+{
+    Q_OBJECT
 public:
-    struct Helper {
-        static qint64 stringVersionToInt(const QString& version);
+    struct Helper
+    {
+        static qint64 stringVersionToInt(const QString &version);
         static qint64 currentVersionToInt();
         static qint64 versionToInt(qint64 major, qint64 minor, qint64 patch, qint64 build);
     };
@@ -36,10 +44,14 @@ public:
 
 protected:
     static QString clientVersion();
+    Updater()
+        : QObject(0)
+    {
+    }
 
 private:
     static QString getSystemInfo();
-    static QUrl addQueryParams(const QUrl &url);
+    static QUrlQuery getQueryParams();
     static Updater *create();
     static Updater *_instance;
 };

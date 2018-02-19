@@ -23,6 +23,8 @@
 #include <QMutex>
 #include <QWaitCondition>
 #include <QLinkedList>
+#include <deque>
+#include "syncoptions.h"
 
 namespace OCC {
 
@@ -34,40 +36,16 @@ class Account;
  * if the files are new, or changed.
  */
 
-/**
- * @brief The FileStatPointer class
- * @ingroup libsync
- */
-class FileStatPointer {
-public:
-    FileStatPointer(csync_vio_file_stat_t *stat)
-        : _stat(stat)
-    { }
-    FileStatPointer(const FileStatPointer &other)
-        : _stat(csync_vio_file_stat_copy(other._stat))
-    { }
-    ~FileStatPointer() {
-        csync_vio_file_stat_destroy(_stat);
-    }
-    FileStatPointer &operator=(const FileStatPointer &other) {
-        csync_vio_file_stat_destroy(_stat);
-        _stat = csync_vio_file_stat_copy(other._stat);
-        return *this;
-    }
-    inline csync_vio_file_stat_t *data() const { return _stat; }
-    inline csync_vio_file_stat_t *operator->() const { return _stat; }
-
-private:
-    csync_vio_file_stat_t *_stat;
-};
-
-struct DiscoveryDirectoryResult {
+struct DiscoveryDirectoryResult
+{
     QString path;
     QString msg;
     int code;
-    QList<FileStatPointer> list;
-    int listIndex;
-    DiscoveryDirectoryResult() : code(EIO), listIndex(0) { }
+    std::deque<std::unique_ptr<csync_file_stat_t>> list;
+    DiscoveryDirectoryResult()
+        : code(EIO)
+    {
+    }
 };
 
 /**
@@ -77,7 +55,8 @@ struct DiscoveryDirectoryResult {
  *
  * @ingroup libsync
  */
-class DiscoverySingleDirectoryJob : public QObject {
+class DiscoverySingleDirectoryJob : public QObject
+{
     Q_OBJECT
 public:
     explicit DiscoverySingleDirectoryJob(const AccountPtr &account, const QString &path, QObject *parent = 0);
@@ -85,19 +64,22 @@ public:
     void setIsRootPath() { _isRootPath = true; }
     void start();
     void abort();
+    std::deque<std::unique_ptr<csync_file_stat_t>> &&takeResults() { return std::move(_results); }
+
     // This is not actually a network job, it is just a job
 signals:
-    void firstDirectoryPermissions(const QString &);
+    void firstDirectoryPermissions(RemotePermissions);
     void etagConcatenation(const QString &);
     void etag(const QString &);
-    void finishedWithResult(const QList<FileStatPointer> &);
+    void finishedWithResult();
     void finishedWithError(int csyncErrnoCode, const QString &msg);
 private slots:
-    void directoryListingIteratedSlot(QString, const QMap<QString,QString>&);
+    void directoryListingIteratedSlot(QString, const QMap<QString, QString> &);
     void lsJobFinishedWithoutErrorSlot();
-    void lsJobFinishedWithErrorSlot(QNetworkReply*);
+    void lsJobFinishedWithErrorSlot(QNetworkReply *);
+
 private:
-    QList<FileStatPointer> _results;
+    std::deque<std::unique_ptr<csync_file_stat_t>> _results;
     QString _subPath;
     QString _etagConcatenation;
     QString _firstEtag;
@@ -107,6 +89,8 @@ private:
     bool _ignoredFirst;
     // Set to true if this is the root path and we need to check the data-fingerprint
     bool _isRootPath;
+    // If this directory is an external storage (The first item has 'M' in its permission)
+    bool _isExternalStorage;
     QPointer<LsColJob> _lsColJob;
 
 public:
@@ -115,7 +99,8 @@ public:
 
 // Lives in main thread. Deleted by the SyncEngine
 class DiscoveryJob;
-class DiscoveryMainThread : public QObject {
+class DiscoveryMainThread : public QObject
+{
     Q_OBJECT
 
     QPointer<DiscoveryJob> _discoveryJob;
@@ -127,9 +112,14 @@ class DiscoveryMainThread : public QObject {
     bool _firstFolderProcessed;
 
 public:
-    DiscoveryMainThread(AccountPtr account) : QObject(), _account(account),
-        _currentDiscoveryDirectoryResult(0), _currentGetSizeResult(0), _firstFolderProcessed(false)
-    { }
+    DiscoveryMainThread(AccountPtr account)
+        : QObject()
+        , _account(account)
+        , _currentDiscoveryDirectoryResult(0)
+        , _currentGetSizeResult(0)
+        , _firstFolderProcessed(false)
+    {
+    }
     void abort();
 
     QByteArray _dataFingerprint;
@@ -137,21 +127,22 @@ public:
 
 public slots:
     // From DiscoveryJob:
-    void doOpendirSlot(const QString &url, DiscoveryDirectoryResult* );
-    void doGetSizeSlot(const QString &path ,qint64 *result);
+    void doOpendirSlot(const QString &url, DiscoveryDirectoryResult *);
+    void doGetSizeSlot(const QString &path, qint64 *result);
 
     // From Job:
-    void singleDirectoryJobResultSlot(const QList<FileStatPointer> &);
+    void singleDirectoryJobResultSlot();
     void singleDirectoryJobFinishedWithErrorSlot(int csyncErrnoCode, const QString &msg);
-    void singleDirectoryJobFirstDirectoryPermissionsSlot(const QString&);
+    void singleDirectoryJobFirstDirectoryPermissionsSlot(RemotePermissions);
 
     void slotGetSizeFinishedWithError();
-    void slotGetSizeResult(const QVariantMap&);
+    void slotGetSizeResult(const QVariantMap &);
 signals:
     void etag(const QString &);
     void etagConcatenation(const QString &);
+
 public:
-    void setupHooks(DiscoveryJob* discoveryJob, const QString &pathPrefix);
+    void setupHooks(DiscoveryJob *discoveryJob, const QString &pathPrefix);
 };
 
 /**
@@ -161,64 +152,57 @@ public:
  *
  * @ingroup libsync
  */
-class DiscoveryJob : public QObject {
+class DiscoveryJob : public QObject
+{
     Q_OBJECT
     friend class DiscoveryMainThread;
-    CSYNC              *_csync_ctx;
-    csync_log_callback  _log_callback;
-    int                 _log_level;
-    void*               _log_userdata;
-    QElapsedTimer       _lastUpdateProgressCallbackCall;
+    CSYNC *_csync_ctx;
+    QElapsedTimer _lastUpdateProgressCallbackCall;
 
     /**
      * return true if the given path should be ignored,
      * false if the path should be synced
      */
-    bool isInSelectiveSyncBlackList(const QString &path) const;
-    static int isInSelectiveSyncBlackListCallback(void *, const char *);
-    bool checkSelectiveSyncNewFolder(const QString &path);
-    static int checkSelectiveSyncNewFolderCallback(void*, const char*);
+    bool isInSelectiveSyncBlackList(const QByteArray &path) const;
+    static int isInSelectiveSyncBlackListCallback(void *, const QByteArray &);
+    bool checkSelectiveSyncNewFolder(const QString &path, RemotePermissions rp);
+    static int checkSelectiveSyncNewFolderCallback(void *data, const QByteArray &path, RemotePermissions rm);
 
     // Just for progress
-    static void update_job_update_callback (bool local,
-                                            const char *dirname,
-                                            void *userdata);
+    static void update_job_update_callback(bool local,
+        const char *dirname,
+        void *userdata);
 
     // For using QNAM to get the directory listings
-    static csync_vio_handle_t* remote_vio_opendir_hook (const char *url,
-                                        void *userdata);
-    static csync_vio_file_stat_t* remote_vio_readdir_hook (csync_vio_handle_t *dhandle,
-                                                                  void *userdata);
-    static void remote_vio_closedir_hook (csync_vio_handle_t *dhandle,
-                                                                  void *userdata);
+    static csync_vio_handle_t *remote_vio_opendir_hook(const char *url,
+        void *userdata);
+    static std::unique_ptr<csync_file_stat_t> remote_vio_readdir_hook(csync_vio_handle_t *dhandle,
+        void *userdata);
+    static void remote_vio_closedir_hook(csync_vio_handle_t *dhandle,
+        void *userdata);
     QMutex _vioMutex;
     QWaitCondition _vioWaitCondition;
 
 
 public:
-    explicit DiscoveryJob(CSYNC *ctx, QObject* parent = 0)
-            : QObject(parent), _csync_ctx(ctx), _newBigFolderSizeLimit(-1) {
-        // We need to forward the log property as csync uses thread local
-        // and updates run in another thread
-        _log_callback = csync_get_log_callback();
-        _log_level = csync_get_log_level();
-        _log_userdata = csync_get_log_userdata();
+    explicit DiscoveryJob(CSYNC *ctx, QObject *parent = 0)
+        : QObject(parent)
+        , _csync_ctx(ctx)
+    {
     }
-
     QStringList _selectiveSyncBlackList;
     QStringList _selectiveSyncWhiteList;
-    qint64 _newBigFolderSizeLimit;
+    SyncOptions _syncOptions;
     Q_INVOKABLE void start();
 signals:
     void finished(int result);
     void folderDiscovered(bool local, QString folderUrl);
 
     // After the discovery job has been woken up again (_vioWaitCondition)
-    void doOpendirSignal(QString url, DiscoveryDirectoryResult*);
+    void doOpendirSignal(QString url, DiscoveryDirectoryResult *);
     void doGetSizeSignal(const QString &path, qint64 *result);
 
     // A new folder was discovered and was not synced because of the confirmation feature
-    void newBigFolder(const QString &folder);
+    void newBigFolder(const QString &folder, bool isExternal);
 };
-
 }

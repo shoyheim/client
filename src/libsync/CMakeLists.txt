@@ -1,17 +1,6 @@
 project(libsync)
 set(CMAKE_AUTOMOC TRUE)
-include(GenerateExportHeader)
 
-configure_file( version.h.in "${CMAKE_CURRENT_BINARY_DIR}/version.h" )
-
-include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
-# csync is required.
-include_directories(${CMAKE_SOURCE_DIR}/csync/src
-                    ${CMAKE_BINARY_DIR}/csync
-                    ${CMAKE_BINARY_DIR}/csync/src
-                   )
-include_directories(${CMAKE_SOURCE_DIR}/src/3rdparty/qjson)
-include_directories(${OPENSSL_INCLUDE_DIR})
 
 if ( APPLE )
     list(APPEND OS_SPECIFIC_LINK_LIBRARIES
@@ -51,25 +40,20 @@ set(libsync_SRCS
     propagatorjobs.cpp
     propagatedownload.cpp
     propagateupload.cpp
+    propagateuploadv1.cpp
+    propagateuploadng.cpp
     propagateremotedelete.cpp
     propagateremotemove.cpp
     propagateremotemkdir.cpp
     syncengine.cpp
+    syncfileitem.cpp
     syncfilestatus.cpp
     syncfilestatustracker.cpp
-    syncjournaldb.cpp
-    syncjournalfilerecord.cpp
     syncresult.cpp
     theme.cpp
-    utility.cpp
-    ownsql.cpp
-    checksums.cpp
-    excludedfiles.cpp
     creds/dummycredentials.cpp
     creds/abstractcredentials.cpp
     creds/credentialscommon.cpp
-    ../3rdparty/qjson/json.cpp
-    ../3rdparty/certificates/p12topem.cpp
 )
 
 if(TOKEN_AUTH_ONLY)
@@ -86,7 +70,6 @@ set(owncloudsync_HEADERS
     networkjobs.h
     progressdispatcher.h
     syncfileitem.h
-    syncjournaldb.h
     syncresult.h
 )
 
@@ -106,29 +89,25 @@ IF (NOT APPLE)
     )
 ENDIF(NOT APPLE)
 
-list(APPEND libsync_LINK_TARGETS
-    ${QT_LIBRARIES}
+add_library(${synclib_NAME} SHARED ${libsync_SRCS})
+target_link_libraries(${synclib_NAME}
     ocsync
     ${OS_SPECIFIC_LINK_LIBRARIES}
-    ${OPENSSL_LIBRARIES}
+    Qt5::Core Qt5::Network
 )
 
-if(QTKEYCHAIN_FOUND OR QT5KEYCHAIN_FOUND)
-    list(APPEND libsync_LINK_TARGETS ${QTKEYCHAIN_LIBRARY})
-    include_directories(${QTKEYCHAIN_INCLUDE_DIR})
+if (NOT TOKEN_AUTH_ONLY)
+    find_package(Qt5 REQUIRED COMPONENTS Widgets)
+    target_link_libraries(${synclib_NAME} Qt5::Widgets ${QTKEYCHAIN_LIBRARY})
+    target_include_directories(${synclib_NAME} PRIVATE ${QTKEYCHAIN_INCLUDE_DIR})
 endif()
 
 if(INOTIFY_FOUND)
-    include_directories(${INOTIFY_INCLUDE_DIR})
+    target_include_directories(${synclib_NAME} PRIVATE ${INOTIFY_INCLUDE_DIR})
     link_directories(${INOTIFY_LIBRARY_DIR})
+    target_link_libraries(${synclib_NAME} ${INOTIFY_LIBRARY} )
 endif()
 
-if(ZLIB_FOUND)
-    list(APPEND libsync_LINK_TARGETS ${ZLIB_LIBRARIES})
-    include_directories(${ZLIB_INCLUDE_DIRS})
-endif(ZLIB_FOUND)
-
-add_library(${synclib_NAME} SHARED ${libsync_SRCS} ${syncMoc})
 GENERATE_EXPORT_HEADER( ${synclib_NAME}
 	BASE_NAME ${synclib_NAME}
 	EXPORT_MACRO_NAME OWNCLOUDSYNC_EXPORT
@@ -136,11 +115,8 @@ GENERATE_EXPORT_HEADER( ${synclib_NAME}
 	STATIC_DEFINE OWNCLOUD_BUILT_AS_STATIC
 )
 
-if(TOKEN_AUTH_ONLY)
-    qt5_use_modules(${synclib_NAME} Network Concurrent)
-else()
-    qt5_use_modules(${synclib_NAME} Widgets Network Concurrent)
-endif()
+target_include_directories(${synclib_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+
 
 set_target_properties( ${synclib_NAME}  PROPERTIES
 	VERSION ${MIRALL_VERSION}
@@ -148,25 +124,7 @@ set_target_properties( ${synclib_NAME}  PROPERTIES
 	RUNTIME_OUTPUT_DIRECTORY ${BIN_OUTPUT_DIRECTORY}
 )
 set_target_properties( ${synclib_NAME} PROPERTIES
-	INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${LIB_INSTALL_DIR}/${APPLICATION_EXECUTABLE}" )
-
-target_link_libraries(${synclib_NAME} ${libsync_LINK_TARGETS} )
-
-if(INOTIFY_FOUND)
-    target_link_libraries(${synclib_NAME} ${INOTIFY_LIBRARY} )
-endif()
-
-if(BUILD_LIBRARIES_ONLY)
-    #add_library(${synclib_NAME}_static STATIC ${libsync_SRCS} ${syncMoc})
-    #qt5_use_modules(${synclib_NAME}_static Widgets Network Xml Sql)
-
-    #set_target_properties( ${synclib_NAME}_static  PROPERTIES
-    #    VERSION ${MIRALL_VERSION}
-    #    SOVERSION ${MIRALL_SOVERSION}
-    #)
-
-    #target_link_libraries(${synclib_NAME}_static ${libsync_LINK_TARGETS} )
-endif()
+	INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${LIB_INSTALL_DIR}/${APPLICATION_EXECUTABLE};${CMAKE_INSTALL_RPATH}" )
 
 if(NOT BUILD_OWNCLOUD_OSX_BUNDLE)
     install(TARGETS ${synclib_NAME}

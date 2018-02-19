@@ -21,6 +21,7 @@
 #include <qcoreevent.h>
 #include <QFile>
 #include "ownclouddolphinpluginhelper.h"
+#include "config.h"
 
 OwncloudDolphinPluginHelper* OwncloudDolphinPluginHelper::instance()
 {
@@ -58,7 +59,8 @@ void OwncloudDolphinPluginHelper::sendCommand(const char* data)
 
 void OwncloudDolphinPluginHelper::slotConnected()
 {
-    sendCommand("SHARE_MENU_TITLE:\n");
+    sendCommand("VERSION:\n");
+    sendCommand("GET_STRINGS:\n");
 }
 
 void OwncloudDolphinPluginHelper::tryConnect()
@@ -67,7 +69,10 @@ void OwncloudDolphinPluginHelper::tryConnect()
         return;
     }
     QString runtimeDir = QFile::decodeName(qgetenv("XDG_RUNTIME_DIR"));
-    QString socketPath = runtimeDir + QLatin1String("/ownCloud/socket");
+    runtimeDir.append( QChar('/'));
+    runtimeDir.append( QLatin1String(APPLICATION_SHORTNAME) );
+
+    const QString socketPath = runtimeDir + QLatin1String("/socket");
     _socket.connectToServer(socketPath);
 }
 
@@ -88,10 +93,22 @@ void OwncloudDolphinPluginHelper::slotReadyRead()
             QString file = QString::fromUtf8(line.constData() + col + 1, line.size() - col - 1);
             _paths.append(file);
             continue;
-        } else if (line.startsWith("SHARE_MENU_TITLE:")) {
-            auto col = line.indexOf(':');
-            _shareActionString = QString::fromUtf8(line.constData() + col + 1, line.size() - col - 1);
+        } else if (line.startsWith("STRING:")) {
+            auto args = QString::fromUtf8(line).split(QLatin1Char(':'));
+            if (args.size() >= 3) {
+                _strings[args[1]] = args.mid(2).join(QLatin1Char(':'));
+            }
             continue;
+        } else if (line.startsWith("VERSION:")) {
+            auto args = line.split(':');
+            auto version = args.value(2);
+            _version = version;
+            if (!version.startsWith("1.")) {
+                // Incompatible version, disconnect forever
+                _connectTimer.stop();
+                _socket.disconnectFromServer();
+                return;
+            }
         }
         emit commandRecieved(line);
     }

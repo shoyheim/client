@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -12,8 +13,6 @@
  */
 
 #include "capabilities.h"
-
-#include "configfile.h"
 
 #include <QVariantMap>
 #include <QDebug>
@@ -48,7 +47,12 @@ bool Capabilities::sharePublicLink() const
 
 bool Capabilities::sharePublicLinkAllowUpload() const
 {
-    return  _capabilities["files_sharing"].toMap()["public"].toMap()["upload"].toBool();
+    return _capabilities["files_sharing"].toMap()["public"].toMap()["upload"].toBool();
+}
+
+bool Capabilities::sharePublicLinkSupportsUploadOnly() const
+{
+    return _capabilities["files_sharing"].toMap()["public"].toMap()["supports_upload_only"].toBool();
 }
 
 bool Capabilities::sharePublicLinkEnforcePassword() const
@@ -64,6 +68,11 @@ bool Capabilities::sharePublicLinkEnforceExpireDate() const
 int Capabilities::sharePublicLinkExpireDateDays() const
 {
     return _capabilities["files_sharing"].toMap()["public"].toMap()["expire_date"].toMap()["days"].toInt();
+}
+
+bool Capabilities::sharePublicLinkMultiple() const
+{
+    return _capabilities["files_sharing"].toMap()["public"].toMap()["multiple"].toBool();
 }
 
 bool Capabilities::shareResharing() const
@@ -85,7 +94,7 @@ bool Capabilities::isValid() const
 QList<QByteArray> Capabilities::supportedChecksumTypes() const
 {
     QList<QByteArray> list;
-    foreach (const auto & t, _capabilities["checksums"].toMap()["supportedTypes"].toList()) {
+    foreach (const auto &t, _capabilities["checksums"].toMap()["supportedTypes"].toList()) {
         list.push_back(t.toByteArray());
     }
     return list;
@@ -107,4 +116,47 @@ QByteArray Capabilities::uploadChecksumType() const
     return QByteArray();
 }
 
+bool Capabilities::chunkingNg() const
+{
+    static const auto chunkng = qgetenv("OWNCLOUD_CHUNKING_NG");
+    if (chunkng == "0")
+        return false;
+    if (chunkng == "1")
+        return true;
+    return _capabilities["dav"].toMap()["chunking"].toByteArray() >= "1.0";
+}
+
+bool Capabilities::chunkingParallelUploadDisabled() const
+{
+    return _capabilities["dav"].toMap()["chunkingParallelUploadDisabled"].toBool();
+}
+
+bool Capabilities::privateLinkPropertyAvailable() const
+{
+    return _capabilities["files"].toMap()["privateLinks"].toBool();
+}
+
+QList<int> Capabilities::httpErrorCodesThatResetFailingChunkedUploads() const
+{
+    QList<int> list;
+    foreach (const auto &t, _capabilities["dav"].toMap()["httpErrorCodesThatResetFailingChunkedUploads"].toList()) {
+        list.push_back(t.toInt());
+    }
+    return list;
+}
+
+QString Capabilities::invalidFilenameRegex() const
+{
+    return _capabilities["dav"].toMap()["invalidFilenameRegex"].toString();
+}
+
+bool Capabilities::uploadConflictFiles() const
+{
+    static auto envIsSet = !qEnvironmentVariableIsEmpty("OWNCLOUD_UPLOAD_CONFLICT_FILES");
+    static int envValue = qEnvironmentVariableIntValue("OWNCLOUD_UPLOAD_CONFLICT_FILES");
+    if (envIsSet)
+        return envValue != 0;
+
+    return _capabilities["uploadConflictFiles"].toBool();
+}
 }

@@ -25,20 +25,20 @@
 #include <QMap>
 #include <QStringList>
 #include <QSharedPointer>
+#include <set>
 
 #include <csync.h>
 
 // when do we go away with this private/public separation?
 #include <csync_private.h>
 
-#include "excludedfiles.h"
 #include "syncfileitem.h"
 #include "progressdispatcher.h"
-#include "utility.h"
+#include "common/utility.h"
 #include "syncfilestatustracker.h"
 #include "accountfwd.h"
 #include "discoveryphase.h"
-#include "checksums.h"
+#include "common/checksums.h"
 
 class QProcess;
 
@@ -47,7 +47,12 @@ namespace OCC {
 class SyncJournalFileRecord;
 class SyncJournalDb;
 class OwncloudPropagator;
-class PropagatorJob;
+
+enum AnotherSyncNeeded {
+    NoFollowUpSync,
+    ImmediateFollowUp, // schedule this again immediately (limited amount of times)
+    DelayedFollowUp // regularly schedule this folder again (around 1/minute, unlimited)
+};
 
 /**
  * @brief The SyncEngine class
@@ -58,10 +63,10 @@ class OWNCLOUDSYNC_EXPORT SyncEngine : public QObject
     Q_OBJECT
 public:
     SyncEngine(AccountPtr account, const QString &localPath,
-               const QUrl &remoteURL, const QString &remotePath, SyncJournalDb *journal);
+        const QString &remotePath, SyncJournalDb *journal);
     ~SyncEngine();
 
-    static QString csyncErrorToString( CSYNC_STATUS);
+    static QString csyncErrorToString(CSYNC_STATUS);
 
     Q_INVOKABLE void startSync();
     void setNetworkLimits(int upload, int download);
@@ -71,10 +76,7 @@ public:
 
     bool isSyncRunning() const { return _syncRunning; }
 
-    /* Set the maximum size a folder can have without asking for confirmation
-     * -1 means infinite
-     */
-    void setNewBigFolderSizeLimit(qint64 limit) { _newBigFolderSizeLimit = limit; }
+    void setSyncOptions(const SyncOptions &options) { _syncOptions = options; }
     bool ignoreHiddenFiles() const { return _csync_ctx->ignore_hidden_files; }
     void setIgnoreHiddenFiles(bool ignore) { _csync_ctx->ignore_hidden_files = ignore; }
 
@@ -82,18 +84,15 @@ public:
     Utility::StopWatch &stopWatch() { return _stopWatch; }
     SyncFileStatusTracker &syncFileStatusTracker() { return *_syncFileStatusTracker; }
 
-    /* Return true if we detected that another sync is needed to complete the sync */
-    bool isAnotherSyncNeeded() { return _anotherSyncNeeded; }
+    /* Returns whether another sync is needed to complete the sync */
+    AnotherSyncNeeded isAnotherSyncNeeded() { return _anotherSyncNeeded; }
 
-    /** Get the ms since a file was touched, or -1 if it wasn't.
-     *
-     * Thread-safe.
-     */
-    qint64 timeSinceFileTouched(const QString& fn) const;
+    bool wasFileTouched(const QString &fn) const;
 
     AccountPtr account() const;
     SyncJournalDb *journal() const { return _journal; }
     QString localPath() const { return _localPath; }
+
     /**
      * Minimum age, in milisecond, of a file that can be uploaded.
      * Files more recent than that are not going to be uploaeded as they are considered
@@ -101,26 +100,38 @@ public:
      */
     static qint64 minimumFileAgeForUpload; // in ms
 
+    /**
+     * Control whether local discovery should read from filesystem or db.
+     *
+     * If style is Partial, the paths is a set of file paths relative to
+     * the synced folder. All the parent directories of these paths will not
+     * be read from the db and scanned on the filesystem.
+     *
+     * Note, the style and paths are only retained for the next sync and
+     * revert afterwards. Use _lastLocalDiscoveryStyle to discover the last
+     * sync's style.
+     */
+    void setLocalDiscoveryOptions(LocalDiscoveryStyle style, std::set<QByteArray> dirs = {});
+
+    /** Access the last sync run's local discovery style */
+    LocalDiscoveryStyle lastLocalDiscoveryStyle() const { return _lastLocalDiscoveryStyle; }
+
 signals:
-    void csyncError( const QString& );
     void csyncUnavailable();
 
     // During update, before reconcile
     void rootEtag(QString);
-    void folderDiscovered(bool local, const QString &folderUrl);
 
-    // before actual syncing (after update+reconcile) for each item
-    void syncItemDiscovered(const SyncFileItem&);
     // after the above signals. with the items that actually need propagating
-    void aboutToPropagate(SyncFileItemVector&);
+    void aboutToPropagate(SyncFileItemVector &);
 
     // after each item completed by a job (successful or not)
-    void itemCompleted(const SyncFileItem&, const PropagatorJob&);
+    void itemCompleted(const SyncFileItemPtr &);
 
-    // after sync is done
-    void treeWalkResult(const SyncFileItemVector&);
+    void transmissionProgress(const ProgressInfo &progress);
 
-    void transmissionProgress( const ProgressInfo& progress );
+    /// We've produced a new sync error of a type.
+    void syncError(const QString &message, ErrorCategory category);
 
     void finished(bool success);
     void started();
@@ -139,7 +150,7 @@ signals:
     void aboutToRestoreBackup(bool *restore);
 
     // A new folder was discovered and was not synced because of the confirmation feature
-    void newBigFolder(const QString &folder);
+    void newBigFolder(const QString &folder, bool isExternal);
 
     /** Emitted when propagation has problems with a locked file.
      *
@@ -148,36 +159,58 @@ signals:
     void seenLockedFile(const QString &fileName);
 
 private slots:
+    void slotFolderDiscovered(bool local, const QString &folder);
     void slotRootEtagReceived(const QString &);
-    void slotItemCompleted(const SyncFileItem& item, const PropagatorJob & job);
+
+    /** Called when a SyncFileItem gets accepted for a sync.
+     *
+     * Mostly done in initial creation inside treewalkFile but
+     * can also be called via the propagator for items that are
+     * created during propagation.
+     */
+    void slotNewItem(const SyncFileItemPtr &item);
+
+    void slotItemCompleted(const SyncFileItemPtr &item);
     void slotFinished(bool success);
-    void slotProgress(const SyncFileItem& item, quint64 curent);
+    void slotProgress(const SyncFileItem &item, quint64 curent);
     void slotDiscoveryJobFinished(int updateResult);
     void slotCleanPollsJobAborted(const QString &error);
 
     /** Records that a file was touched by a job. */
-    void slotAddTouchedFile(const QString& fn);
+    void slotAddTouchedFile(const QString &fn);
 
     /** Wipes the _touchedFiles hash */
     void slotClearTouchedFiles();
 
+    /** Emit a summary error, unless it was seen before */
+    void slotSummaryError(const QString &message);
+
+    void slotInsufficientLocalStorage();
+    void slotInsufficientRemoteStorage();
+
 private:
     void handleSyncError(CSYNC *ctx, const char *state);
+    void csyncError(const QString &message);
 
-    static int treewalkLocal( TREE_WALK_FILE*, void *);
-    static int treewalkRemote( TREE_WALK_FILE*, void *);
-    int treewalkFile( TREE_WALK_FILE*, bool );
-    bool checkErrorBlacklisting( SyncFileItem &item );
+    QString journalDbFilePath() const;
+
+    static int treewalkLocal(csync_file_stat_t *file, csync_file_stat_t *other, void *);
+    static int treewalkRemote(csync_file_stat_t *file, csync_file_stat_t *other, void *);
+    int treewalkFile(csync_file_stat_t *file, csync_file_stat_t *other, bool);
+    bool checkErrorBlacklisting(SyncFileItem &item);
 
     // Cleans up unnecessary downloadinfo entries in the journal as well
     // as their temporary files.
-    void deleteStaleDownloadInfos();
+    void deleteStaleDownloadInfos(const SyncFileItemVector &syncItems);
 
     // Removes stale uploadinfos from the journal.
-    void deleteStaleUploadInfos();
+    void deleteStaleUploadInfos(const SyncFileItemVector &syncItems);
 
     // Removes stale error blacklist entries from the journal.
-    void deleteStaleErrorBlacklistEntries();
+    void deleteStaleErrorBlacklistEntries(const SyncFileItemVector &syncItems);
+
+    // Removes stale and adds missing conflict records after sync
+    void conflictRecordMaintenance();
 
     // cleanup and emit the finished signal
     void finalize(bool success);
@@ -187,22 +220,16 @@ private:
     // Must only be acessed during update and reconcile
     QMap<QString, SyncFileItemPtr> _syncItemMap;
 
-    // should be called _syncItems (present tense). It's the items from the _syncItemMap but
-    // sorted and re-adjusted based on permissions.
-    SyncFileItemVector _syncedItems;
-
     AccountPtr _account;
-    CSYNC *_csync_ctx;
+    QScopedPointer<CSYNC> _csync_ctx;
     bool _needsUpdate;
     bool _syncRunning;
     QString _localPath;
-    QUrl _remoteUrl;
     QString _remotePath;
     QString _remoteRootEtag;
     SyncJournalDb *_journal;
     QPointer<DiscoveryMainThread> _discoveryMainThread;
-    QSharedPointer <OwncloudPropagator> _propagator;
-    QString _lastDeleted; // if the last item was a path and it has been deleted
+    QSharedPointer<OwncloudPropagator> _propagator;
 
     // After a sync, only the syncdb entries whose filenames appear in this
     // set will be kept. See _temporarilyUnavailablePaths.
@@ -234,40 +261,48 @@ private:
      * check if we are allowed to propagate everything, and if we are not, adjust the instructions
      * to recover
      */
-    void checkForPermission();
-    QByteArray getPermissions(const QString& file) const;
+    void checkForPermission(SyncFileItemVector &syncItems);
+    RemotePermissions getPermissions(const QString &file) const;
 
     /**
      * Instead of downloading files from the server, upload the files to the server
      */
-    void restoreOldFiles();
+    void restoreOldFiles(SyncFileItemVector &syncItems);
 
-    bool _hasNoneFiles; // true if there is at least one file which was not changed on the server
-    bool _hasRemoveFile; // true if there is at leasr one file with instruction REMOVE
-    bool _hasForwardInTimeFiles; // true if there is at least one file from the server that goes forward in time
-    int _backInTimeFiles; // number of files which goes back in time from the server
+    // true if there is at least one file which was not changed on the server
+    bool _hasNoneFiles;
+
+    // true if there is at leasr one file with instruction REMOVE
+    bool _hasRemoveFile;
+
+    // true if there is at least one file from the server that goes forward in time
+    bool _hasForwardInTimeFiles;
+
+    // number of files which goes back in time from the server
+    int _backInTimeFiles;
 
 
     int _uploadLimit;
     int _downloadLimit;
-    /* maximum size a folder can have without asking for confirmation: -1 means infinite */
-    qint64 _newBigFolderSizeLimit;
-
-    // hash containing the permissions on the remote directory
-    QHash<QString, QByteArray> _remotePerms;
+    SyncOptions _syncOptions;
 
     /// Hook for computing checksums from csync_update
     CSyncChecksumHook _checksum_hook;
 
-    bool _anotherSyncNeeded;
+    AnotherSyncNeeded _anotherSyncNeeded;
 
     /** Stores the time since a job touched a file. */
-    QHash<QString, QElapsedTimer> _touchedFiles;
+    QMultiMap<QElapsedTimer, QString> _touchedFiles;
 
     /** For clearing the _touchedFiles variable after sync finished */
     QTimer _clearTouchedFilesTimer;
-};
 
+    /** List of unique errors that occurred in a sync run. */
+    QSet<QString> _uniqueErrors;
+
+    /** The kind of local discovery the last sync run used */
+    LocalDiscoveryStyle _lastLocalDiscoveryStyle = LocalDiscoveryStyle::DatabaseAndFilesystem;
+};
 }
 
 #endif // CSYNCTHREAD_H
