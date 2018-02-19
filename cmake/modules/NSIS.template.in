@@ -120,8 +120,9 @@ ReserveFile "${NSISDIR}\Plugins\InstallOptions.dll"
 !define MUI_HEADERIMAGE
 !define MUI_HEADERIMAGE_BITMAP  ${WIN_SETUP_BITMAP_PATH}/page_header.bmp
 !define MUI_COMPONENTSPAGE_SMALLDESC
-!define MUI_FINISHPAGE_LINK "${APPLICATION_DOMAIN}"
-!define MUI_FINISHPAGE_LINK_LOCATION "http://${APPLICATION_DOMAIN}"
+; We removed this, h1 issue 191687
+;!define MUI_FINISHPAGE_LINK "${APPLICATION_DOMAIN}"
+;!define MUI_FINISHPAGE_LINK_LOCATION "http://${APPLICATION_DOMAIN}"
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !ifdef OPTION_FINISHPAGE_RELEASE_NOTES
    !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
@@ -599,10 +600,8 @@ Section "${APPLICATION_NAME}" SEC_APPLICATION
    File "${QT_DLL_PATH}\Qt5Core.dll"
    File "${QT_DLL_PATH}\Qt5Gui.dll"
    File "${QT_DLL_PATH}\Qt5Network.dll"
-   File "${QT_DLL_PATH}\Qt5OpenGL.dll"
    File "${QT_DLL_PATH}\Qt5PrintSupport.dll"
    File "${QT_DLL_PATH}\Qt5Qml.dll"
-   File "${QT_DLL_PATH}\Qt5Quick.dll"
    File "${QT_DLL_PATH}\Qt5Sql.dll"
    File "${QT_DLL_PATH}\Qt5WebKit.dll"
    File "${QT_DLL_PATH}\Qt5WebKitWidgets.dll"
@@ -631,7 +630,10 @@ Section "${APPLICATION_NAME}" SEC_APPLICATION
    File "${MING_BIN}\libxslt-1.dll"
    File "${MING_BIN}\libxml2-2.dll"
    File "${MING_BIN}\zlib1.dll"
-   File "${MING_BIN}\libsqlite3-0.dll"
+   File "${MING_BIN}\libharfbuzz-0.dll"
+   File "${MING_BIN}\libfreetype-6.dll"
+   File "${MING_BIN}\libglib-2.0-0.dll"
+   File "${MING_BIN}\libintl-8.dll"
    
    File "${MING_BIN}\libharfbuzz-0.dll"
    File "${MING_BIN}\Qt5Positioning.dll"

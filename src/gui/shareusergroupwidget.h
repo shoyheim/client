@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -19,7 +20,6 @@
 #include "QProgressIndicator.h"
 #include <QDialog>
 #include <QWidget>
-#include <QVariantMap>
 #include <QSharedPointer>
 #include <QList>
 #include <QVector>
@@ -32,8 +32,8 @@ class QModelIndex;
 namespace OCC {
 
 namespace Ui {
-class ShareUserGroupWidget;
-class ShareWidget;
+    class ShareUserGroupWidget;
+    class ShareUserLine;
 }
 
 class AbstractCredentials;
@@ -44,44 +44,6 @@ class Sharee;
 class ShareManager;
 class ShareeModel;
 
-class ShareWidget : public QWidget
-{
-    Q_OBJECT
-
-public:
-    explicit ShareWidget(QSharedPointer<Share> Share,
-                         SharePermissions maxSharingPermissions,
-                         bool isFile,
-                         QWidget *parent = 0);
-    ~ShareWidget();
-
-    QSharedPointer<Share> share() const;
-
-signals:
-    void shareDeleted(ShareWidget *share);
-    void resizeRequested();
-
-private slots:
-    void on_deleteShareButton_clicked();
-    void slotPermissionsChanged();
-    void slotEditPermissionsChanged();
-    void slotDeleteAnimationFinished();
-
-    void slotShareDeleted();
-    void slotPermissionsSet();
-private:
-    void displayPermissions();
-
-    Ui::ShareWidget *_ui;
-    QSharedPointer<Share> _share;
-    bool _isFile;
-
-    QAction *_permissionCreate;
-    QAction *_permissionUpdate;
-    QAction *_permissionDelete;
-};
-
-
 /**
  * @brief The ShareDialog (user/group) class
  * @ingroup gui
@@ -91,11 +53,12 @@ class ShareUserGroupWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit ShareUserGroupWidget(AccountPtr account, 
-                                  const QString &sharePath,
-                                  const QString &localPath,
-                                  SharePermissions maxSharingPermissions,
-                                  QWidget *parent = 0);
+    explicit ShareUserGroupWidget(AccountPtr account,
+        const QString &sharePath,
+        const QString &localPath,
+        SharePermissions maxSharingPermissions,
+        const QString &privateLinkUrl,
+        QWidget *parent = 0);
     ~ShareUserGroupWidget();
 
 public slots:
@@ -109,23 +72,29 @@ private slots:
     void slotLineEditTextEdited(const QString &text);
 
     void slotLineEditReturn();
-    void slotCompleterActivated(const QModelIndex & index);
-    void slotCompleterHighlighted(const QModelIndex & index);
+    void slotCompleterActivated(const QModelIndex &index);
+    void slotCompleterHighlighted(const QModelIndex &index);
     void slotShareesReady();
     void slotAdjustScrollWidgetSize();
-    void displayError(int code ,const QString &message);
+    void slotPrivateLinkShare();
+    void displayError(int code, const QString &message);
+
+    void slotPrivateLinkOpenBrowser();
+    void slotPrivateLinkCopy();
+    void slotPrivateLinkEmail();
 
 private:
     Ui::ShareUserGroupWidget *_ui;
     AccountPtr _account;
     QString _sharePath;
     QString _localPath;
+    SharePermissions _maxSharingPermissions;
+    QString _privateLinkUrl;
 
     QCompleter *_completer;
     ShareeModel *_completerModel;
     QTimer _completionTimer;
 
-    SharePermissions _maxSharingPermissions;
     bool _isFile;
     bool _disableCompleterActivated; // in order to avoid that we share the contents twice
     ShareManager *_manager;
@@ -133,6 +102,46 @@ private:
     QProgressIndicator _pi_sharee;
 };
 
+/**
+ * The widget displayed for each user/group share
+ */
+class ShareUserLine : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit ShareUserLine(QSharedPointer<Share> Share,
+        SharePermissions maxSharingPermissions,
+        bool isFile,
+        QWidget *parent = 0);
+    ~ShareUserLine();
+
+    QSharedPointer<Share> share() const;
+
+signals:
+    void visualDeletionDone();
+    void resizeRequested();
+
+private slots:
+    void on_deleteShareButton_clicked();
+    void slotPermissionsChanged();
+    void slotEditPermissionsChanged();
+    void slotDeleteAnimationFinished();
+
+    void slotShareDeleted();
+    void slotPermissionsSet();
+
+private:
+    void displayPermissions();
+
+    Ui::ShareUserLine *_ui;
+    QSharedPointer<Share> _share;
+    bool _isFile;
+
+    QAction *_permissionCreate;
+    QAction *_permissionUpdate;
+    QAction *_permissionDelete;
+};
 }
 
 #endif // SHAREUSERGROUPWIDGET_H

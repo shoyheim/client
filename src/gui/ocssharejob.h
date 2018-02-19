@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -15,7 +16,7 @@
 #define OCSSHAREJOB_H
 
 #include "ocsjob.h"
-#include "share.h"
+#include "sharemanager.h"
 #include <QVector>
 #include <QList>
 #include <QPair>
@@ -29,10 +30,10 @@ namespace OCC {
  * Handle talking to the OCS Share API. 
  * For creation, deletion and modification of shares.
  */
-class OcsShareJob : public OcsJob {
+class OcsShareJob : public OcsJob
+{
     Q_OBJECT
 public:
-
     /**
      * Constructor for new shares or listing of shares
      */
@@ -43,7 +44,7 @@ public:
      *
      * @param path Path to request shares for (default all shares)
      */
-    void getShares(const QString& path = "");
+    void getShares(const QString &path = "");
 
     /**
      * Delete the current Share
@@ -56,7 +57,7 @@ public:
      * @param date The expire date, if this date is invalid the expire date
      * will be removed
      */
-    void setExpireDate(const QString &shareId, const QDate& date);
+    void setExpireDate(const QString &shareId, const QDate &date);
 
     /**
      * Set the password of a share
@@ -64,31 +65,38 @@ public:
      * @param password The password of the share, if the password is empty the
      * share will be removed
      */
-    void setPassword(const QString &shareId, const QString& password);
+    void setPassword(const QString &shareId, const QString &password);
 
     /**
-     * Void set the share to be public upload
+     * Set the share to be public upload
      * 
      * @param publicUpload Set or remove public upload
      */
     void setPublicUpload(const QString &shareId, bool publicUpload);
 
     /**
+     * Change the name of a share
+     */
+    void setName(const QString &shareId, const QString &name);
+
+    /**
      * Set the permissions
      *
      * @param permissions
      */
-    void setPermissions(const QString &shareId, 
-                        const Share::Permissions permissions);
+    void setPermissions(const QString &shareId,
+        const Share::Permissions permissions);
 
     /**
      * Create a new link share
      *
      * @param path The path of the file/folder to share
+     * @param name The name of the link share, empty name auto-generates one
      * @param password Optionally a password for the share
      */
-    void createLinkShare(const QString& path, 
-                         const QString& password = "");
+    void createLinkShare(const QString &path,
+        const QString &name,
+        const QString &password);
 
     /**
      * Create a new share
@@ -98,10 +106,10 @@ public:
      * @param shareWith The uid/gid/federated id to share with
      * @param permissions The permissions the share will have
      */
-    void createShare(const QString& path, 
-                     const Share::ShareType shareType,
-                     const QString& shareWith = "",
-                     const Share::Permissions permissions = SharePermissionRead);
+    void createShare(const QString &path,
+        const Share::ShareType shareType,
+        const QString &shareWith = "",
+        const Share::Permissions permissions = SharePermissionRead);
 
     /**
      * Returns information on the items shared with the current user.
@@ -118,15 +126,14 @@ signals:
      * @param reply The reply
      * @param value To what did we set a variable (if we set any).
      */
-    void shareJobFinished(QVariantMap reply, QVariant value);
+    void shareJobFinished(QJsonDocument reply, QVariant value);
 
 private slots:
-    void jobDone(QVariantMap reply);
+    void jobDone(QJsonDocument reply);
 
 private:
     QVariant _value;
 };
-
 }
 
 #endif // OCSSHAREJOB_H

@@ -15,93 +15,98 @@
 #include "propagateremotedelete.h"
 #include "owncloudpropagator_p.h"
 #include "account.h"
+#include "common/asserts.h"
+
+#include <QLoggingCategory>
 
 namespace OCC {
 
-DeleteJob::DeleteJob(AccountPtr account, const QString& path, QObject* parent)
-    : AbstractNetworkJob(account, path, parent)
-{ }
+Q_LOGGING_CATEGORY(lcDeleteJob, "sync.networkjob.delete", QtInfoMsg)
+Q_LOGGING_CATEGORY(lcPropagateRemoteDelete, "sync.propagator.remotedelete", QtInfoMsg)
 
+DeleteJob::DeleteJob(AccountPtr account, const QString &path, QObject *parent)
+    : AbstractNetworkJob(account, path, parent)
+{
+}
+
+DeleteJob::DeleteJob(AccountPtr account, const QUrl &url, QObject *parent)
+    : AbstractNetworkJob(account, QString(), parent)
+    , _url(url)
+{
+}
 
 void DeleteJob::start()
 {
     QNetworkRequest req;
-    setReply(davRequest("DELETE", path(), req));
-    setupConnections(reply());
+    if (_url.isValid()) {
+        sendRequest("DELETE", _url, req);
+    } else {
+        sendRequest("DELETE", makeDavUrl(path()), req);
+    }
 
-    if( reply()->error() != QNetworkReply::NoError ) {
-        qWarning() << Q_FUNC_INFO << " Network error: " << reply()->errorString();
+    if (reply()->error() != QNetworkReply::NoError) {
+        qCWarning(lcDeleteJob) << " Network error: " << reply()->errorString();
     }
     AbstractNetworkJob::start();
 }
 
-
-QString DeleteJob::errorString()
-{
-    if (_timedout) {
-        return tr("Connection timed out");
-    } else if (reply()->hasRawHeader("OC-ErrorString")) {
-        return reply()->rawHeader("OC-ErrorString");
-    } else {
-        return reply()->errorString();
-    }
-}
-
 bool DeleteJob::finished()
 {
+    qCInfo(lcDeleteJob) << "DELETE of" << reply()->request().url() << "FINISHED WITH STATUS"
+                        << reply()->error()
+                        << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString());
+
     emit finishedSignal();
     return true;
 }
 
 void PropagateRemoteDelete::start()
 {
-    if (_propagator->_abortRequested.fetchAndAddRelaxed(0))
+    if (propagator()->_abortRequested.fetchAndAddRelaxed(0))
         return;
 
-    qDebug() << Q_FUNC_INFO << _item->_file;
+    qCDebug(lcPropagateRemoteDelete) << _item->_file;
 
-    _job = new DeleteJob(_propagator->account(),
-                         _propagator->_remoteFolder + _item->_file,
-                         this);
-    connect(_job, SIGNAL(finishedSignal()), this, SLOT(slotDeleteJobFinished()));
-    _propagator->_activeJobList.append(this);
+    _job = new DeleteJob(propagator()->account(),
+        propagator()->_remoteFolder + _item->_file,
+        this);
+    connect(_job.data(), &DeleteJob::finishedSignal, this, &PropagateRemoteDelete::slotDeleteJobFinished);
+    propagator()->_activeJobList.append(this);
     _job->start();
 }
 
-void PropagateRemoteDelete::abort()
+void PropagateRemoteDelete::abort(PropagatorJob::AbortType abortType)
 {
-    if (_job &&  _job->reply())
+    if (_job && _job->reply())
         _job->reply()->abort();
+
+    if (abortType == AbortType::Asynchronous) {
+        emit abortFinished();
+    }
 }
 
 void PropagateRemoteDelete::slotDeleteJobFinished()
 {
-    _propagator->_activeJobList.removeOne(this);
+    propagator()->_activeJobList.removeOne(this);
 
-    Q_ASSERT(_job);
-
-    qDebug() << Q_FUNC_INFO << _job->reply()->request().url() << "FINISHED WITH STATUS"
-        << _job->reply()->error()
-        << (_job->reply()->error() == QNetworkReply::NoError ? QLatin1String("") : _job->reply()->errorString());
+    ASSERT(_job);
 
     QNetworkReply::NetworkError err = _job->reply()->error();
     const int httpStatus = _job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     _item->_httpErrorCode = httpStatus;
 
     if (err != QNetworkReply::NoError && err != QNetworkReply::ContentNotFoundError) {
-
-        if( checkForProblemsWithShared(_item->_httpErrorCode,
-            tr("The file has been removed from a read only share. It was restored.")) ) {
+        if (checkForProblemsWithShared(_item->_httpErrorCode,
+                tr("The file has been removed from a read only share. It was restored."))) {
             return;
         }
 
         SyncFileItem::Status status = classifyError(err, _item->_httpErrorCode,
-                                                    &_propagator->_anotherSyncNeeded);
+            &propagator()->_anotherSyncNeeded);
         done(status, _job->errorString());
         return;
     }
 
-    _item->_requestDuration = _job->duration();
     _item->_responseTimeStamp = _job->responseTimestamp();
 
     // A 404 reply is also considered a success here: We want to make sure
@@ -112,16 +117,15 @@ void PropagateRemoteDelete::slotDeleteJobFinished()
         // Normally we expect "204 No Content"
         // If it is not the case, it might be because of a proxy or gateway intercepting the request, so we must
         // throw an error.
-        done(SyncFileItem::NormalError, tr("Wrong HTTP code returned by server. Expected 204, but received \"%1 %2\".")
-            .arg(_item->_httpErrorCode).arg(_job->reply()->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString()));
+        done(SyncFileItem::NormalError,
+            tr("Wrong HTTP code returned by server. Expected 204, but received \"%1 %2\".")
+                .arg(_item->_httpErrorCode)
+                .arg(_job->reply()->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString()));
         return;
     }
 
-    _propagator->_journal->deleteFileRecord(_item->_originalFile, _item->_isDirectory);
-    _propagator->_journal->commit("Remote Remove");
+    propagator()->_journal->deleteFileRecord(_item->_originalFile, _item->isDirectory());
+    propagator()->_journal->commit("Remote Remove");
     done(SyncFileItem::Success);
 }
-
-
 }
-

@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -14,15 +15,7 @@
 #include "creds/dummycredentials.h"
 #include "accessmanager.h"
 
-namespace OCC
-{
-
-bool DummyCredentials::changed(AbstractCredentials* credentials) const
-{
-    DummyCredentials* dummy(dynamic_cast< DummyCredentials* >(credentials));
-
-    return dummy == 0;
-}
+namespace OCC {
 
 QString DummyCredentials::authType() const
 {
@@ -34,7 +27,7 @@ QString DummyCredentials::user() const
     return _user;
 }
 
-QNetworkAccessManager* DummyCredentials::getQNAM() const
+QNetworkAccessManager *DummyCredentials::createQNAM() const
 {
     return new AccessManager;
 }
@@ -52,6 +45,7 @@ bool DummyCredentials::stillValid(QNetworkReply *reply)
 
 void DummyCredentials::fetchFromKeychain()
 {
+    _wasFetched = true;
     Q_EMIT(fetched());
 }
 
@@ -61,6 +55,7 @@ void DummyCredentials::askFromUser()
 }
 
 void DummyCredentials::persist()
-{}
+{
+}
 
 } // namespace OCC

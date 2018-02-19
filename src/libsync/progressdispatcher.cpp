@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -15,67 +16,69 @@
 
 #include <QObject>
 #include <QMetaType>
-#include <QDebug>
 #include <QCoreApplication>
 
 namespace OCC {
 
-ProgressDispatcher* ProgressDispatcher::_instance = 0;
+ProgressDispatcher *ProgressDispatcher::_instance = 0;
 
-QString Progress::asResultString( const SyncFileItem& item)
+QString Progress::asResultString(const SyncFileItem &item)
 {
-    switch(item._instruction) {
+    switch (item._instruction) {
     case CSYNC_INSTRUCTION_SYNC:
     case CSYNC_INSTRUCTION_NEW:
     case CSYNC_INSTRUCTION_TYPE_CHANGE:
         if (item._direction != SyncFileItem::Up) {
-            return QCoreApplication::translate( "progress", "Downloaded");
+            return QCoreApplication::translate("progress", "Downloaded");
         } else {
-            return QCoreApplication::translate( "progress", "Uploaded");
+            return QCoreApplication::translate("progress", "Uploaded");
         }
     case CSYNC_INSTRUCTION_CONFLICT:
-        return QCoreApplication::translate( "progress", "Server version downloaded, copied changed local file into conflict file");
+        return QCoreApplication::translate("progress", "Server version downloaded, copied changed local file into conflict file");
     case CSYNC_INSTRUCTION_REMOVE:
-        return QCoreApplication::translate( "progress", "Deleted");
+        return QCoreApplication::translate("progress", "Deleted");
     case CSYNC_INSTRUCTION_EVAL_RENAME:
     case CSYNC_INSTRUCTION_RENAME:
-        return QCoreApplication::translate( "progress", "Moved to %1").arg(item._renameTarget);
+        return QCoreApplication::translate("progress", "Moved to %1").arg(item._renameTarget);
     case CSYNC_INSTRUCTION_IGNORE:
-        return QCoreApplication::translate( "progress", "Ignored");
+        return QCoreApplication::translate("progress", "Ignored");
     case CSYNC_INSTRUCTION_STAT_ERROR:
-        return QCoreApplication::translate( "progress", "Filesystem access error");
+        return QCoreApplication::translate("progress", "Filesystem access error");
     case CSYNC_INSTRUCTION_ERROR:
-        return QCoreApplication::translate( "progress", "Error");
+        return QCoreApplication::translate("progress", "Error");
+    case CSYNC_INSTRUCTION_UPDATE_METADATA:
+        return QCoreApplication::translate("progress", "Updated local metadata");
     case CSYNC_INSTRUCTION_NONE:
     case CSYNC_INSTRUCTION_EVAL:
-        return QCoreApplication::translate( "progress", "Unknown");
-
+        return QCoreApplication::translate("progress", "Unknown");
     }
-    return QCoreApplication::translate( "progress", "Unknown");
+    return QCoreApplication::translate("progress", "Unknown");
 }
 
-QString Progress::asActionString( const SyncFileItem &item )
+QString Progress::asActionString(const SyncFileItem &item)
 {
-    switch(item._instruction) {
+    switch (item._instruction) {
     case CSYNC_INSTRUCTION_CONFLICT:
     case CSYNC_INSTRUCTION_SYNC:
     case CSYNC_INSTRUCTION_NEW:
     case CSYNC_INSTRUCTION_TYPE_CHANGE:
         if (item._direction != SyncFileItem::Up)
-            return QCoreApplication::translate( "progress", "downloading");
+            return QCoreApplication::translate("progress", "downloading");
         else
-            return QCoreApplication::translate( "progress", "uploading");
+            return QCoreApplication::translate("progress", "uploading");
     case CSYNC_INSTRUCTION_REMOVE:
-        return QCoreApplication::translate( "progress", "deleting");
+        return QCoreApplication::translate("progress", "deleting");
     case CSYNC_INSTRUCTION_EVAL_RENAME:
     case CSYNC_INSTRUCTION_RENAME:
-        return QCoreApplication::translate( "progress", "moving");
+        return QCoreApplication::translate("progress", "moving");
     case CSYNC_INSTRUCTION_IGNORE:
-        return QCoreApplication::translate( "progress", "ignoring");
+        return QCoreApplication::translate("progress", "ignoring");
     case CSYNC_INSTRUCTION_STAT_ERROR:
-        return QCoreApplication::translate( "progress", "error");
+        return QCoreApplication::translate("progress", "error");
     case CSYNC_INSTRUCTION_ERROR:
-        return QCoreApplication::translate( "progress", "error");
+        return QCoreApplication::translate("progress", "error");
+    case CSYNC_INSTRUCTION_UPDATE_METADATA:
+        return QCoreApplication::translate("progress", "updating local metadata");
     case CSYNC_INSTRUCTION_NONE:
     case CSYNC_INSTRUCTION_EVAL:
         break;
@@ -83,66 +86,76 @@ QString Progress::asActionString( const SyncFileItem &item )
     return QString();
 }
 
-bool Progress::isWarningKind( SyncFileItem::Status kind)
+bool Progress::isWarningKind(SyncFileItem::Status kind)
 {
-    return  kind == SyncFileItem::SoftError || kind == SyncFileItem::NormalError
-         || kind == SyncFileItem::FatalError || kind == SyncFileItem::FileIgnored
-         || kind == SyncFileItem::Conflict || kind == SyncFileItem::Restoration;
-
+    return kind == SyncFileItem::SoftError || kind == SyncFileItem::NormalError
+        || kind == SyncFileItem::FatalError || kind == SyncFileItem::FileIgnored
+        || kind == SyncFileItem::Conflict || kind == SyncFileItem::Restoration
+        || kind == SyncFileItem::DetailError || kind == SyncFileItem::BlacklistedError;
 }
 
-bool Progress::isIgnoredKind( SyncFileItem::Status kind)
+bool Progress::isIgnoredKind(SyncFileItem::Status kind)
 {
-    return  kind == SyncFileItem::FileIgnored;
-
+    return kind == SyncFileItem::FileIgnored;
 }
 
-ProgressDispatcher* ProgressDispatcher::instance() {
+ProgressDispatcher *ProgressDispatcher::instance()
+{
     if (!_instance) {
         _instance = new ProgressDispatcher();
     }
     return _instance;
 }
 
-ProgressDispatcher::ProgressDispatcher(QObject *parent) :
-    QObject(parent)
+ProgressDispatcher::ProgressDispatcher(QObject *parent)
+    : QObject(parent)
 {
-
 }
 
 ProgressDispatcher::~ProgressDispatcher()
 {
-
 }
 
-void ProgressDispatcher::setProgressInfo(const QString& folder, const ProgressInfo& progress)
+void ProgressDispatcher::setProgressInfo(const QString &folder, const ProgressInfo &progress)
 {
-    if( folder.isEmpty())
-// The update phase now also has progress
-//            (progress._currentItems.size() == 0
-//             && progress._totalFileCount == 0) )
+    if (folder.isEmpty())
+    // The update phase now also has progress
+    //            (progress._currentItems.size() == 0
+    //             && progress._totalFileCount == 0) )
     {
         return;
     }
-    emit progressInfo( folder, progress );
+    emit progressInfo(folder, progress);
 }
 
 ProgressInfo::ProgressInfo()
 {
-    connect(&_updateEstimatesTimer, SIGNAL(timeout()), SLOT(updateEstimates()));
+    connect(&_updateEstimatesTimer, &QTimer::timeout, this, &ProgressInfo::updateEstimates);
     reset();
 }
 
 void ProgressInfo::reset()
 {
+    _status = Starting;
+
     _currentItems.clear();
     _currentDiscoveredFolder.clear();
     _sizeProgress = Progress();
     _fileProgress = Progress();
     _totalSizeOfCompletedJobs = 0;
-    _maxBytesPerSecond = 100000.0;
-    _maxFilesPerSecond = 2.0;
+
+    // Historically, these starting estimates were way lower, but that lead
+    // to gross overestimation of ETA when a good estimate wasn't available.
+    _maxBytesPerSecond = 2000000.0; // 2 MB/s
+    _maxFilesPerSecond = 10.0;
+
     _updateEstimatesTimer.stop();
+    _lastCompletedItem = SyncFileItem();
+}
+
+ProgressInfo::Status ProgressInfo::status() const
+{
+    return _status;
 }
 
 void ProgressInfo::startEstimateUpdates()
@@ -159,18 +172,11 @@ static bool shouldCountProgress(const SyncFileItem &item)
 {
     const auto instruction = item._instruction;
 
-    // Don't worry about directories that won't have propagation
-    // jobs associated with them.
-    if (item._isDirectory
-            && (instruction == CSYNC_INSTRUCTION_NONE
-                || instruction == CSYNC_INSTRUCTION_SYNC
-                || instruction == CSYNC_INSTRUCTION_CONFLICT)) {
-        return false;
-    }
-
-    // Skip any ignored or error files, we do nothing with them.
-    if (instruction == CSYNC_INSTRUCTION_IGNORE
-            || instruction == CSYNC_INSTRUCTION_ERROR) {
+    // Skip any ignored, error or non-propagated files and directories.
+    if (instruction == CSYNC_INSTRUCTION_NONE
+        || instruction == CSYNC_INSTRUCTION_UPDATE_METADATA
+        || instruction == CSYNC_INSTRUCTION_IGNORE
+        || instruction == CSYNC_INSTRUCTION_ERROR) {
         return false;
     }
 
@@ -279,39 +285,44 @@ ProgressInfo::Estimates ProgressInfo::totalProgress() const
     // assume the remaining transfer will be done with the highest speed
     // we've seen.
 
-    // This assumes files and transfers finish as quickly as possible
-    // *but* note that maxPerSecond could be serious underestimates
-    // (if we never got to fully excercise transfer or files/second)
-    quint64 optimisticEta =
-            _fileProgress.remaining()  / _maxFilesPerSecond * 1000
-            + _sizeProgress.remaining() / _maxBytesPerSecond * 1000;
-
     // Compute a value that is 0 when fps is <=L*max and 1 when fps is >=U*max
     double fps = _fileProgress._progressPerSec;
     double fpsL = 0.5;
     double fpsU = 0.8;
     double nearMaxFps =
-            qBound(0.0,
-                   (fps - fpsL * _maxFilesPerSecond) /
-                   ((fpsU - fpsL) * _maxFilesPerSecond),
-                   1.0);
+        qBound(0.0,
+            (fps - fpsL * _maxFilesPerSecond) / ((fpsU - fpsL) * _maxFilesPerSecond),
+            1.0);
 
     // Compute a value that is 0 when transfer is >= U*max and
     // 1 when transfer is <= L*max
     double trans = _sizeProgress._progressPerSec;
     double transU = 0.1;
     double transL = 0.01;
-    double slowTransfer = 1.0 -
-            qBound(0.0,
-                   (trans - transL * _maxBytesPerSecond) /
-                   ((transU - transL) * _maxBytesPerSecond),
-                   1.0);
+    double slowTransfer = 1.0 - qBound(0.0,
+                                    (trans - transL * _maxBytesPerSecond) / ((transU - transL) * _maxBytesPerSecond),
+                                    1.0);
 
     double beOptimistic = nearMaxFps * slowTransfer;
     size.estimatedEta = (1.0 - beOptimistic) * size.estimatedEta
-                        + beOptimistic * optimisticEta;
+        + beOptimistic * optimisticEta();
 
     return size;
+}
+
+quint64 ProgressInfo::optimisticEta() const
+{
+    // This assumes files and transfers finish as quickly as possible
+    // *but* note that maxPerSecond could be serious underestimate
+    // (if we never got to fully excercise transfer or files/second)
+
+    return _fileProgress.remaining() / _maxFilesPerSecond * 1000
+        + _sizeProgress.remaining() / _maxBytesPerSecond * 1000;
+}
+
+bool ProgressInfo::trustEta() const
+{
+    return totalProgress().estimatedEta < 100 * optimisticEta();
 }
 
 ProgressInfo::Estimates ProgressInfo::fileProgress(const SyncFileItem &item) const
@@ -332,15 +343,15 @@ void ProgressInfo::updateEstimates()
     }
 
     _maxFilesPerSecond = qMax(_fileProgress._progressPerSec,
-                              _maxFilesPerSecond);
+        _maxFilesPerSecond);
     _maxBytesPerSecond = qMax(_sizeProgress._progressPerSec,
-                              _maxBytesPerSecond);
+        _maxBytesPerSecond);
 }
 
 void ProgressInfo::recomputeCompletedSize()
 {
     quint64 r = _totalSizeOfCompletedJobs;
-    foreach(const ProgressItem &i, _currentItems) {
+    foreach (const ProgressItem &i, _currentItems) {
         if (isSizeDependent(i._item))
             r += i._progress._completed;
     }
@@ -390,6 +401,4 @@ void ProgressInfo::Progress::setCompleted(quint64 completed)
     _completed = qMin(completed, _total);
     _prevCompleted = qMin(_prevCompleted, _completed);
 }
-
-
 }

@@ -9,16 +9,12 @@
 #include <QDir>
 #include <QString>
 
-#include "checksums.h"
+#include "common/checksums.h"
 #include "networkjobs.h"
-#include "utility.h"
+#include "common/utility.h"
 #include "filesystem.h"
 #include "propagatorjobs.h"
 
-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
-// poor man QTRY_VERIFY when Qt5 is not available.
-#define QTRY_VERIFY(Cond) QTest::qWait(1000); QVERIFY(Cond)
-#endif
 
 using namespace OCC;
 
@@ -55,7 +51,6 @@ using namespace OCC;
     private slots:
 
     void initTestCase() {
-        qDebug() << Q_FUNC_INFO;
         _root = QDir::tempPath() + "/" + "test_" + QString::number(qrand());
         QDir rootDir(_root);
 
@@ -65,7 +60,9 @@ using namespace OCC;
     }
 
     void testUploadChecksummingAdler() {
-
+#ifndef ZLIB_FOUND
+        QSKIP("ZLIB not found.", SkipSingle);
+#else
         ComputeChecksum *vali = new ComputeChecksum(this);
         _expectedType = "Adler32";
         vali->setChecksumType(_expectedType);
@@ -81,6 +78,7 @@ using namespace OCC;
         loop.exec();
 
         delete vali;
+#endif
     }
 
     void testUploadChecksummingMd5() {
@@ -119,7 +117,9 @@ using namespace OCC;
     }
 
     void testDownloadChecksummingAdler() {
-
+#ifndef ZLIB_FOUND
+        QSKIP("ZLIB not found.", SkipSingle);
+#else
         QByteArray adler =  checkSumAdlerC;
         adler.append(":");
         adler.append(FileSystem::calcAdler32( _testfile ));
@@ -143,6 +143,7 @@ using namespace OCC;
         QTRY_VERIFY(_errorSeen);
 
         delete vali;
+#endif
     }
 
 
@@ -150,16 +151,6 @@ using namespace OCC;
     }
 };
 
-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
-// Qt4 does not have QTEST_GUILESS_MAIN, so we simulate it.
-int main(int argc, char *argv[])
-{
-    QCoreApplication app(argc, argv);
-    TestChecksumValidator tc;
-    return QTest::qExec(&tc, argc, argv);
-}
-#else
     QTEST_GUILESS_MAIN(TestChecksumValidator)
-#endif
 
 #include "testchecksumvalidator.moc"

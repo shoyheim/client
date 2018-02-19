@@ -23,27 +23,25 @@
 #include "wizard/owncloudwizardcommon.h"
 #include "wizard/owncloudwizard.h"
 
-namespace OCC
-{
+namespace OCC {
 
-OwncloudHttpCredsPage::OwncloudHttpCredsPage(QWidget* parent)
-  : AbstractCredentialsWizardPage(),
-    _ui(),
-    _connected(false),
-    _checking(false),
-    _progressIndi(new QProgressIndicator (this))
+OwncloudHttpCredsPage::OwncloudHttpCredsPage(QWidget *parent)
+    : AbstractCredentialsWizardPage()
+    , _ui()
+    , _connected(false)
+    , _progressIndi(new QProgressIndicator(this))
 {
     _ui.setupUi(this);
 
-    if(parent){
+    if (parent) {
         _ocWizard = qobject_cast<OwncloudWizard *>(parent);
     }
 
-    registerField( QLatin1String("OCUser*"),   _ui.leUsername);
-    registerField( QLatin1String("OCPasswd*"), _ui.lePassword);
+    registerField(QLatin1String("OCUser*"), _ui.leUsername);
+    registerField(QLatin1String("OCPasswd*"), _ui.lePassword);
 
     Theme *theme = Theme::instance();
-    switch(theme->userIDType()) {
+    switch (theme->userIDType()) {
     case Theme::UserIDUserName:
         // default, handled in ui file
         break;
@@ -61,7 +59,7 @@ OwncloudHttpCredsPage::OwncloudHttpCredsPage(QWidget* parent)
     setTitle(WizardCommon::titleTemplate().arg(tr("Connect to %1").arg(Theme::instance()->appNameGUI())));
     setSubTitle(WizardCommon::subTitleTemplate().arg(tr("Enter user credentials")));
 
-    _ui.resultLayout->addWidget( _progressIndi );
+    _ui.resultLayout->addWidget(_progressIndi);
     stopSpinner();
     setupCustomization();
 }
@@ -73,22 +71,22 @@ void OwncloudHttpCredsPage::setupCustomization()
     _ui.bottomLabel->hide();
 
     Theme *theme = Theme::instance();
-    QVariant variant = theme->customMedia( Theme::oCSetupTop );
-    if( !variant.isNull() ) {
-        WizardCommon::setupCustomMedia( variant, _ui.topLabel );
+    QVariant variant = theme->customMedia(Theme::oCSetupTop);
+    if (!variant.isNull()) {
+        WizardCommon::setupCustomMedia(variant, _ui.topLabel);
     }
 
-    variant = theme->customMedia( Theme::oCSetupBottom );
-    WizardCommon::setupCustomMedia( variant, _ui.bottomLabel );
+    variant = theme->customMedia(Theme::oCSetupBottom);
+    WizardCommon::setupCustomMedia(variant, _ui.bottomLabel);
 }
 
 void OwncloudHttpCredsPage::initializePage()
 {
     WizardCommon::initErrorLabel(_ui.errorLabel);
 
-    OwncloudWizard* ocWizard = qobject_cast< OwncloudWizard* >(wizard());
+    OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
     AbstractCredentials *cred = ocWizard->account()->credentials();
-    HttpCredentials *httpCreds = qobject_cast<HttpCredentials*>(cred);
+    HttpCredentials *httpCreds = qobject_cast<HttpCredentials *>(cred);
     if (httpCreds) {
         const QString user = httpCreds->fetchUser();
         if (!user.isEmpty()) {
@@ -107,13 +105,15 @@ void OwncloudHttpCredsPage::initializePage()
         const QString user = url.userName();
         const QString password = url.password();
 
-        if(!user.isEmpty()) {
+        if (!user.isEmpty()) {
             _ui.leUsername->setText(user);
         }
-        if(!password.isEmpty()) {
+        if (!password.isEmpty()) {
             _ui.lePassword->setText(password);
         }
     }
+    _ui.tokenLabel->setText(HttpCredentialsGui::requestAppPasswordText(ocWizard->account().data()));
+    _ui.tokenLabel->setVisible(!_ui.tokenLabel->text().isEmpty());
     _ui.leUsername->setFocus();
 }
 
@@ -131,14 +131,20 @@ bool OwncloudHttpCredsPage::validatePage()
 
     if (!_connected) {
         _ui.errorLabel->setVisible(false);
-        _checking = true;
         startSpinner();
+
+        // Reset cookies to ensure the username / password is actually used
+        OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
+        ocWizard->account()->clearCookieJar();
+
         emit completeChanged();
         emit connectToOCUrl(field("OCUrl").toString().simplified());
 
         return false;
     } else {
-        _checking = false;
+        // Reset, to require another connection attempt next time
+        _connected = false;
+
         emit completeChanged();
         stopSpinner();
         return true;
@@ -151,10 +157,10 @@ int OwncloudHttpCredsPage::nextId() const
     return WizardCommon::Page_AdvancedSetup;
 }
 
-void OwncloudHttpCredsPage::setConnected( bool comp )
+void OwncloudHttpCredsPage::setConnected()
 {
-    _connected = comp;
-    stopSpinner ();
+    _connected = true;
+    stopSpinner();
 }
 
 void OwncloudHttpCredsPage::startSpinner()
@@ -171,22 +177,21 @@ void OwncloudHttpCredsPage::stopSpinner()
     _progressIndi->stopAnimation();
 }
 
-void OwncloudHttpCredsPage::setErrorString(const QString& err)
+void OwncloudHttpCredsPage::setErrorString(const QString &err)
 {
-    if( err.isEmpty()) {
+    if (err.isEmpty()) {
         _ui.errorLabel->setVisible(false);
     } else {
         _ui.errorLabel->setVisible(true);
         _ui.errorLabel->setText(err);
     }
-    _checking = false;
     emit completeChanged();
     stopSpinner();
 }
 
-AbstractCredentials* OwncloudHttpCredsPage::getCredentials() const
+AbstractCredentials *OwncloudHttpCredsPage::getCredentials() const
 {
-    return new HttpCredentialsGui(_ui.leUsername->text(), _ui.lePassword->text(), _ocWizard->ownCloudCertificatePath, _ocWizard->ownCloudCertificatePasswd);
+    return new HttpCredentialsGui(_ui.leUsername->text(), _ui.lePassword->text(), _ocWizard->_clientSslCertificate, _ocWizard->_clientSslKey);
 }
 
 

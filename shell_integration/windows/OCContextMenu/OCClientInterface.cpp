@@ -36,54 +36,81 @@ using namespace std;
 
 OCClientInterface::ContextMenuInfo OCClientInterface::FetchInfo()
 {
-	auto pipename = CommunicationSocket::DefaultPipePath();
+    auto pipename = CommunicationSocket::DefaultPipePath();
 
-	CommunicationSocket socket;
-	if (!WaitNamedPipe(pipename.data(), PIPE_TIMEOUT)) {
-		return {};
-	}
-	if (!socket.Connect(pipename)) {
-		return {};
-	}
-	socket.SendMsg(L"SHARE_MENU_TITLE\n");
+    CommunicationSocket socket;
+    if (!WaitNamedPipe(pipename.data(), PIPE_TIMEOUT)) {
+        return {};
+    }
+    if (!socket.Connect(pipename)) {
+        return {};
+    }
+    socket.SendMsg(L"GET_STRINGS\n");
 
-	ContextMenuInfo info;
-	std::wstring response;
-	int sleptCount = 0;
-	while (sleptCount < 5) {
-		if (socket.ReadLine(&response)) {
-			if (StringUtil::begins_with(response, wstring(L"REGISTER_PATH:"))) {
-				wstring responsePath = response.substr(14); // length of REGISTER_PATH
-				info.watchedDirectories.push_back(responsePath);
-			}
-			else if (StringUtil::begins_with(response, wstring(L"SHARE_MENU_TITLE:"))) {
-				info.shareMenuTitle = response.substr(17); // length of SHARE_MENU_TITLE:
-				break; // Stop once we received the last sent request
-			}
-		}
-		else {
-			Sleep(50);
-			++sleptCount;
-		}
-	}
-	return info;
+    ContextMenuInfo info;
+    std::wstring response;
+    int sleptCount = 0;
+    while (sleptCount < 5) {
+        if (socket.ReadLine(&response)) {
+            if (StringUtil::begins_with(response, wstring(L"REGISTER_PATH:"))) {
+                wstring responsePath = response.substr(14); // length of REGISTER_PATH
+                info.watchedDirectories.push_back(responsePath);
+            }
+            else if (StringUtil::begins_with(response, wstring(L"STRING:"))) {
+                wstring stringName, stringValue;
+                if (!StringUtil::extractChunks(response, stringName, stringValue))
+                    continue;
+                if (stringName == L"SHARE_MENU_TITLE")
+                    info.shareMenuTitle = move(stringValue);
+                else if (stringName == L"CONTEXT_MENU_TITLE")
+                    info.contextMenuTitle = move(stringValue);
+                else if (stringName == L"COPY_PRIVATE_LINK_MENU_TITLE")
+                    info.copyLinkMenuTitle = move(stringValue);
+                else if (stringName == L"EMAIL_PRIVATE_LINK_MENU_TITLE")
+                    info.emailLinkMenuTitle = move(stringValue);
+            }
+            else if (StringUtil::begins_with(response, wstring(L"GET_STRINGS:END"))) {
+                break; // Stop once we completely received the last sent request
+            }
+        }
+        else {
+            Sleep(50);
+            ++sleptCount;
+        }
+    }
+    return info;
 }
 
-void OCClientInterface::ShareObject(const std::wstring &path)
+void OCClientInterface::RequestShare(const std::wstring &path)
 {
-	auto pipename = CommunicationSocket::DefaultPipePath();
+    SendRequest(L"SHARE", path);
+}
 
-	CommunicationSocket socket;
-	if (!WaitNamedPipe(pipename.data(), PIPE_TIMEOUT)) {
-		return;
-	}
-	if (!socket.Connect(pipename)) {
-		return;
-	}
+void OCClientInterface::RequestCopyLink(const std::wstring &path)
+{
+    SendRequest(L"COPY_PRIVATE_LINK", path);
+}
 
-	wchar_t msg[SOCK_BUFFER] = { 0 };
-	if (SUCCEEDED(StringCchPrintf(msg, SOCK_BUFFER, L"SHARE:%s\n", path.c_str())))
-	{
-		socket.SendMsg(msg);
-	}
+void OCClientInterface::RequestEmailLink(const std::wstring &path)
+{
+    SendRequest(L"EMAIL_PRIVATE_LINK", path);
+}
+
+void OCClientInterface::SendRequest(wchar_t *verb, const std::wstring &path)
+{
+    auto pipename = CommunicationSocket::DefaultPipePath();
+
+    CommunicationSocket socket;
+    if (!WaitNamedPipe(pipename.data(), PIPE_TIMEOUT)) {
+        return;
+    }
+    if (!socket.Connect(pipename)) {
+        return;
+    }
+
+    wchar_t msg[SOCK_BUFFER] = { 0 };
+    if (SUCCEEDED(StringCchPrintf(msg, SOCK_BUFFER, L"%s:%s\n", verb, path.c_str())))
+    {
+        socket.SendMsg(msg);
+    }
 }

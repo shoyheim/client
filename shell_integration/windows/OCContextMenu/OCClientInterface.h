@@ -43,12 +43,21 @@ class CommunicationSocket;
 class OCClientInterface
 {
 public:
-	struct ContextMenuInfo {
-		std::vector<std::wstring> watchedDirectories;
-		std::wstring shareMenuTitle;
-	};
-	static ContextMenuInfo FetchInfo();
-	static void ShareObject(const std::wstring &path);
+    struct ContextMenuInfo {
+        std::vector<std::wstring> watchedDirectories;
+        std::wstring contextMenuTitle;
+        std::wstring shareMenuTitle;
+        std::wstring copyLinkMenuTitle;
+        std::wstring emailLinkMenuTitle;
+    };
+    static ContextMenuInfo FetchInfo();
+
+    static void RequestShare(const std::wstring &path);
+    static void RequestCopyLink(const std::wstring &path);
+    static void RequestEmailLink(const std::wstring &path);
+
+private:
+    static void SendRequest(wchar_t *verb, const std::wstring &path);
 };
 
 #endif //ABSTRACTSOCKETHANDLER_H

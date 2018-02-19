@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -17,11 +18,8 @@
 #include <Sparkle/SUUpdater.h>
 #include <AppKit/NSApplication.h>
 
+#include "common/utility.h"
 #include "updater/sparkleupdater.h"
-
-#include "utility.h"
-
-#include <QDebug>
 
 // Does not work yet
 @interface DelegateObject : NSObject <SUUpdaterDelegate>
@@ -32,38 +30,33 @@
 // Only possible in later versions, we're not up to date here.
 - (BOOL)updaterMayCheckForUpdates:(SUUpdater *)bundle
 {
-    qDebug() << Q_FUNC_INFO << "may check: YES";
+    qCDebug(OCC::lcUpdater) << "may check: YES";
     return YES;
 }
 
 // Sent when a valid update is found by the update driver.
 - (void)updater:(SUUpdater *)updater didFindValidUpdate:(SUAppcastItem *)update
 {
-    qDebug() << Q_FUNC_INFO;
 }
 
 // Sent when a valid update is not found.
 // Does not seem to get called ever.
 - (void)updaterDidNotFindUpdate:(SUUpdater *)update
 {
-    qDebug() << Q_FUNC_INFO;
 }
 
 // Sent immediately before installing the specified update.
 - (void)updater:(SUUpdater *)updater willInstallUpdate:(SUAppcastItem *)update
 {
-    qDebug() << Q_FUNC_INFO;
 }
 
 // Tried implementing those methods, but they never ever seem to get called
 //- (void) updater:(SUUpdater *)updater didAbortWithError:(NSError *)error
 //{
-//    qDebug() << Q_FUNC_INFO << [error localizedDescription];
 //}
 
 //- (void)updater:(SUUpdater *)updater didFinishLoadingAppcast:(SUAppcast *)appcast
 //{
-//    qDebug() << Q_FUNC_INFO << appcast;
 //}
 
 
@@ -120,7 +113,7 @@ bool autoUpdaterAllowed()
     if ([expectedPath isEqualTo:bundlePath]) {
         return true;
     }
-    qDebug() << "ERROR: We are not in /Applications, won't check for update!";
+    qCWarning(lcUpdater) << "We are not in /Applications, won't check for update!";
     return false;
 }
 
@@ -134,7 +127,7 @@ void SparkleUpdater::checkForUpdate()
 
 void SparkleUpdater::backgroundCheckForUpdate()
 {
-    qDebug() << Q_FUNC_INFO << "launching background check";
+    qCDebug(OCC::lcUpdater) << "launching background check";
     if (autoUpdaterAllowed()) {
         [d->updater checkForUpdatesInBackground];
     }

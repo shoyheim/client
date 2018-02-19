@@ -4,7 +4,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -16,16 +17,17 @@
 #include <QNetworkReply>
 #include <QMessageBox>
 #include <QAuthenticator>
-#include <QDebug>
 
 #include "creds/shibbolethcredentials.h"
 #include "creds/shibboleth/shibbolethwebview.h"
 #include "creds/shibbolethcredentials.h"
 #include "shibboleth/shibbolethuserjob.h"
 #include "creds/credentialscommon.h"
+#include "creds/httpcredentialsgui.h"
 
 #include "accessmanager.h"
 #include "account.h"
+#include "configfile.h"
 #include "theme.h"
 #include "cookiejar.h"
 #include "owncloudgui.h"
@@ -35,35 +37,38 @@
 
 using namespace QKeychain;
 
-namespace OCC
-{
+namespace OCC {
 
-namespace
-{
+Q_LOGGING_CATEGORY(lcShibboleth, "gui.credentials.shibboleth", QtInfoMsg)
 
-// Not "user" because it has a special meaning for http
-const char userC[] = "shib_user";
-const char shibCookieNameC[] = "_shibsession_";
+namespace {
+
+    // Not "user" because it has a special meaning for http
+    const char userC[] = "shib_user";
+    const char shibCookieNameC[] = "_shibsession_";
 
 } // ns
 
 ShibbolethCredentials::ShibbolethCredentials()
-    : AbstractCredentials(),
-      _url(),
-      _ready(false),
-      _stillValid(false),
-      _browser(0)
-{}
-
-ShibbolethCredentials::ShibbolethCredentials(const QNetworkCookie& cookie)
-  : _ready(true),
-    _stillValid(true),
-    _browser(0),
-    _shibCookie(cookie)
+    : AbstractCredentials()
+    , _url()
+    , _ready(false)
+    , _stillValid(false)
+    , _browser(0)
+    , _keychainMigration(false)
 {
 }
 
-void ShibbolethCredentials::setAccount(Account* account)
+ShibbolethCredentials::ShibbolethCredentials(const QNetworkCookie &cookie)
+    : _ready(true)
+    , _stillValid(true)
+    , _browser(0)
+    , _shibCookie(cookie)
+    , _keychainMigration(false)
+{
+}
+
+void ShibbolethCredentials::setAccount(Account *account)
 {
     AbstractCredentials::setAccount(account);
 
@@ -75,23 +80,8 @@ void ShibbolethCredentials::setAccount(Account* account)
     // When constructed with a cookie (by the wizard), we usually don't know the
     // user name yet. Request it now from the server.
     if (_ready && _user.isEmpty()) {
-        QTimer::singleShot(1234, this, SLOT(slotFetchUser()));
+        QTimer::singleShot(1234, this, &ShibbolethCredentials::slotFetchUser);
     }
-}
-
-bool ShibbolethCredentials::changed(AbstractCredentials* credentials) const
-{
-    ShibbolethCredentials* other(qobject_cast< ShibbolethCredentials* >(credentials));
-
-    if (!other) {
-        return true;
-    }
-
-    if (_shibCookie != other->_shibCookie || _user != other->_user) {
-        return true;
-    }
-
-    return false;
 }
 
 QString ShibbolethCredentials::authType() const
@@ -104,15 +94,15 @@ QString ShibbolethCredentials::user() const
     return _user;
 }
 
-QNetworkAccessManager* ShibbolethCredentials::getQNAM() const
+QNetworkAccessManager *ShibbolethCredentials::createQNAM() const
 {
-    QNetworkAccessManager* qnam(new AccessManager);
-    connect(qnam, SIGNAL(finished(QNetworkReply*)),
-            this, SLOT(slotReplyFinished(QNetworkReply*)));
+    QNetworkAccessManager *qnam(new AccessManager);
+    connect(qnam, &QNetworkAccessManager::finished,
+        this, &ShibbolethCredentials::slotReplyFinished);
     return qnam;
 }
 
-void ShibbolethCredentials::slotReplyFinished(QNetworkReply* r)
+void ShibbolethCredentials::slotReplyFinished(QNetworkReply *r)
 {
     if (!_browser.isNull()) {
         return;
@@ -121,7 +111,8 @@ void ShibbolethCredentials::slotReplyFinished(QNetworkReply* r)
     QVariant target = r->attribute(QNetworkRequest::RedirectionTargetAttribute);
     if (target.isValid()) {
         _stillValid = false;
-        qWarning() << Q_FUNC_INFO << "detected redirect, will open Login Window"; // will be done in NetworkJob's finished signal
+        // The Login window will be opened in NetworkJob's finished signal
+        qCWarning(lcShibboleth) << "detected redirect, will open Login Window";
     } else {
         //_stillValid = true; // gets set when reading from keychain or getting it from browser
     }
@@ -134,6 +125,8 @@ bool ShibbolethCredentials::ready() const
 
 void ShibbolethCredentials::fetchFromKeychain()
 {
+    _wasFetched = true;
+
     if (_user.isEmpty()) {
         _user = _account->credentialSetting(QLatin1String(userC)).toString();
     }
@@ -141,18 +134,49 @@ void ShibbolethCredentials::fetchFromKeychain()
         Q_EMIT fetched();
     } else {
         _url = _account->url();
-        ReadPasswordJob *job = new ReadPasswordJob(Theme::instance()->appName());
-        job->setSettings(_account->settingsWithGroup(Theme::instance()->appName(), job).release());
-        job->setInsecureFallback(false);
-        job->setKey(keychainKey(_account->url().toString(), "shibAssertion"));
-        connect(job, SIGNAL(finished(QKeychain::Job*)), SLOT(slotReadJobDone(QKeychain::Job*)));
-        job->start();
+        _keychainMigration = false;
+        fetchFromKeychainHelper();
     }
+}
+
+void ShibbolethCredentials::fetchFromKeychainHelper()
+{
+    ReadPasswordJob *job = new ReadPasswordJob(Theme::instance()->appName());
+    job->setSettings(ConfigFile::settingsWithGroup(Theme::instance()->appName(), job).release());
+    job->setInsecureFallback(false);
+    job->setKey(keychainKey(_url.toString(), user(),
+        _keychainMigration ? QString() : _account->id()));
+    connect(job, &Job::finished, this, &ShibbolethCredentials::slotReadJobDone);
+    job->start();
 }
 
 void ShibbolethCredentials::askFromUser()
 {
-    showLoginWindow();
+    // First, we do a DetermineAuthTypeJob to make sure that the server is still using shibboleth and did not upgrade to oauth
+    DetermineAuthTypeJob *job = new DetermineAuthTypeJob(_account->sharedFromThis(), this);
+    connect(job, &DetermineAuthTypeJob::authType, [this, job](DetermineAuthTypeJob::AuthType type) {
+        if (type == DetermineAuthTypeJob::Shibboleth) {
+            // Normal case, still shibboleth
+            showLoginWindow();
+        } else if (type == DetermineAuthTypeJob::OAuth) {
+            // Hack: upgrade to oauth
+            auto newCred = new HttpCredentialsGui;
+            job->setParent(0);
+            job->deleteLater();
+            auto account = this->_account;
+            auto user = this->_user;
+            account->setCredentials(newCred); // delete this
+            account->setCredentialSetting(QLatin1String("user"), user);
+            newCred->fetchUser();
+            newCred->askFromUser();
+        } else {
+            // Basic auth or unkown. Since it may be unkown it might be a temporary failure, don't replace the credentials here
+            // Still show the login window in that case not to break the flow.
+            showLoginWindow();
+        }
+
+    });
+    job->start();
 }
 
 bool ShibbolethCredentials::stillValid(QNetworkReply *reply)
@@ -173,11 +197,11 @@ void ShibbolethCredentials::invalidateToken()
 {
     _ready = false;
 
-    CookieJar *jar = static_cast<CookieJar*>(_account->networkAccessManager()->cookieJar());
+    CookieJar *jar = static_cast<CookieJar *>(_account->networkAccessManager()->cookieJar());
 
     // Remove the _shibCookie
     auto cookies = jar->allCookies();
-    for (auto it = cookies.begin(); it != cookies.end(); ) {
+    for (auto it = cookies.begin(); it != cookies.end();) {
         if (it->name() == _shibCookie.name()) {
             it = cookies.erase(it);
         } else {
@@ -197,7 +221,7 @@ void ShibbolethCredentials::forgetSensitiveData()
     invalidateToken();
 }
 
-void ShibbolethCredentials::onShibbolethCookieReceived(const QNetworkCookie& shibCookie)
+void ShibbolethCredentials::onShibbolethCookieReceived(const QNetworkCookie &shibCookie)
 {
     storeShibCookie(shibCookie);
     _shibCookie = shibCookie;
@@ -210,8 +234,8 @@ void ShibbolethCredentials::slotFetchUser()
 {
     // We must first do a request to webdav so the session is enabled.
     // (because for some reason we can't access the API without that..  a bug in the server maybe?)
-    EntityExistsJob* job = new EntityExistsJob(_account->sharedFromThis(), _account->davPath(), this);
-    connect(job, SIGNAL(exists(QNetworkReply*)), this, SLOT(slotFetchUserHelper()));
+    EntityExistsJob *job = new EntityExistsJob(_account->sharedFromThis(), _account->davPath(), this);
+    connect(job, &EntityExistsJob::exists, this, &ShibbolethCredentials::slotFetchUserHelper);
     job->setIgnoreCredentialFailure(true);
     job->start();
 }
@@ -219,7 +243,7 @@ void ShibbolethCredentials::slotFetchUser()
 void ShibbolethCredentials::slotFetchUserHelper()
 {
     ShibbolethUserJob *job = new ShibbolethUserJob(_account->sharedFromThis(), this);
-    connect(job, SIGNAL(userFetched(QString)), this, SLOT(slotUserFetched(QString)));
+    connect(job, &ShibbolethUserJob::userFetched, this, &ShibbolethCredentials::slotUserFetched);
     job->start();
 }
 
@@ -227,11 +251,11 @@ void ShibbolethCredentials::slotUserFetched(const QString &user)
 {
     if (_user.isEmpty()) {
         if (user.isEmpty()) {
-            qDebug() << "Failed to fetch the shibboleth user";
+            qCWarning(lcShibboleth) << "Failed to fetch the shibboleth user";
         }
         _user = user;
     } else if (user != _user) {
-        qDebug() << "Wrong user: " << user << "!=" << _user;
+        qCWarning(lcShibboleth) << "Wrong user: " << user << "!=" << _user;
         QMessageBox::warning(_browser, tr("Login Error"), tr("You must sign in as user %1").arg(_user));
         invalidateToken();
         showLoginWindow();
@@ -252,8 +276,18 @@ void ShibbolethCredentials::slotBrowserRejected()
 
 void ShibbolethCredentials::slotReadJobDone(QKeychain::Job *job)
 {
+    // If we can't find the credentials at the keys that include the account id,
+    // try to read them from the legacy locations that don't have a account id.
+    if (!_keychainMigration && job->error() == QKeychain::EntryNotFound) {
+        qCWarning(lcShibboleth)
+            << "Could not find keychain entry, attempting to read from legacy location";
+        _keychainMigration = true;
+        fetchFromKeychainHelper();
+        return;
+    }
+
     if (job->error() == QKeychain::NoError) {
-        ReadPasswordJob *readJob = static_cast<ReadPasswordJob*>(job);
+        ReadPasswordJob *readJob = static_cast<ReadPasswordJob *>(job);
         delete readJob->settings();
         QList<QNetworkCookie> cookies = QNetworkCookie::parseCookies(readJob->textData().toUtf8());
         if (cookies.count() > 0) {
@@ -261,7 +295,7 @@ void ShibbolethCredentials::slotReadJobDone(QKeychain::Job *job)
             addToCookieJar(_shibCookie);
         }
         // access
-        job->setSettings(_account->settingsWithGroup(Theme::instance()->appName(), job).release());
+        job->setSettings(ConfigFile::settingsWithGroup(Theme::instance()->appName(), job).release());
 
         _ready = true;
         _stillValid = true;
@@ -269,6 +303,19 @@ void ShibbolethCredentials::slotReadJobDone(QKeychain::Job *job)
     } else {
         _ready = false;
         Q_EMIT fetched();
+    }
+
+
+    // If keychain data was read from legacy location, wipe these entries and store new ones
+    if (_keychainMigration && _ready) {
+        persist();
+
+        DeletePasswordJob *job = new DeletePasswordJob(Theme::instance()->appName());
+        job->setSettings(ConfigFile::settingsWithGroup(Theme::instance()->appName(), job).release());
+        job->setKey(keychainKey(_account->url().toString(), user(), QString()));
+        job->start();
+
+        qCWarning(lcShibboleth) << "Migrated old keychain entries";
     }
 }
 
@@ -279,32 +326,32 @@ void ShibbolethCredentials::showLoginWindow()
         return;
     }
 
-    CookieJar *jar = static_cast<CookieJar*>(_account->networkAccessManager()->cookieJar());
+    CookieJar *jar = static_cast<CookieJar *>(_account->networkAccessManager()->cookieJar());
     // When opening a new window clear all the session cookie that might keep the user from logging in
     // (or the session may already be open in the server, and there will not be redirect asking for the
     // real long term cookie we want to store)
     jar->clearSessionCookies();
 
     _browser = new ShibbolethWebView(_account->sharedFromThis());
-    connect(_browser, SIGNAL(shibbolethCookieReceived(QNetworkCookie)),
-            this, SLOT(onShibbolethCookieReceived(QNetworkCookie)), Qt::QueuedConnection);
-    connect(_browser, SIGNAL(rejected()), this, SLOT(slotBrowserRejected()));
+    connect(_browser.data(), &ShibbolethWebView::shibbolethCookieReceived,
+        this, &ShibbolethCredentials::onShibbolethCookieReceived, Qt::QueuedConnection);
+    connect(_browser.data(), &ShibbolethWebView::rejected, this, &ShibbolethCredentials::slotBrowserRejected);
 
     ownCloudGui::raiseDialog(_browser);
 }
 
-QList<QNetworkCookie> ShibbolethCredentials::accountCookies(Account* account)
+QList<QNetworkCookie> ShibbolethCredentials::accountCookies(Account *account)
 {
     return account->networkAccessManager()->cookieJar()->cookiesForUrl(account->davUrl());
 }
 
-QNetworkCookie ShibbolethCredentials::findShibCookie(Account* account, QList<QNetworkCookie> cookies)
+QNetworkCookie ShibbolethCredentials::findShibCookie(Account *account, QList<QNetworkCookie> cookies)
 {
-    if(cookies.isEmpty()) {
+    if (cookies.isEmpty()) {
         cookies = accountCookies(account);
     }
 
-    Q_FOREACH(QNetworkCookie cookie, cookies) {
+    Q_FOREACH (QNetworkCookie cookie, cookies) {
         if (cookie.name().startsWith(shibCookieNameC)) {
             return cookie;
         }
@@ -320,10 +367,10 @@ QByteArray ShibbolethCredentials::shibCookieName()
 void ShibbolethCredentials::storeShibCookie(const QNetworkCookie &cookie)
 {
     WritePasswordJob *job = new WritePasswordJob(Theme::instance()->appName());
-    job->setSettings(_account->settingsWithGroup(Theme::instance()->appName(), job).release());
+    job->setSettings(ConfigFile::settingsWithGroup(Theme::instance()->appName(), job).release());
     // we don't really care if it works...
     //connect(job, SIGNAL(finished(QKeychain::Job*)), SLOT(slotWriteJobDone(QKeychain::Job*)));
-    job->setKey(keychainKey(_account->url().toString(), "shibAssertion"));
+    job->setKey(keychainKey(_account->url().toString(), user(), _account->id()));
     job->setTextData(QString::fromUtf8(cookie.toRawForm()));
     job->start();
 }
@@ -331,8 +378,8 @@ void ShibbolethCredentials::storeShibCookie(const QNetworkCookie &cookie)
 void ShibbolethCredentials::removeShibCookie()
 {
     DeletePasswordJob *job = new DeletePasswordJob(Theme::instance()->appName());
-    job->setSettings(_account->settingsWithGroup(Theme::instance()->appName(), job).release());
-    job->setKey(keychainKey(_account->url().toString(), "shibAssertion"));
+    job->setSettings(ConfigFile::settingsWithGroup(Theme::instance()->appName(), job).release());
+    job->setKey(keychainKey(_account->url().toString(), user(), _account->id()));
     job->start();
 }
 
@@ -345,6 +392,5 @@ void ShibbolethCredentials::addToCookieJar(const QNetworkCookie &cookie)
     jar->setCookiesFromUrl(cookies, _account->url());
     jar->blockSignals(false);
 }
-
 
 } // namespace OCC

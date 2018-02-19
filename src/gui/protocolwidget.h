@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -29,9 +30,24 @@ namespace OCC {
 class SyncResult;
 
 namespace Ui {
-  class ProtocolWidget;
+    class ProtocolWidget;
 }
 class Application;
+
+/**
+ * A QTreeWidgetItem with special sorting.
+ *
+ * It allows items for global entries to be moved to the top if the
+ * sorting section is the "Time" column.
+ */
+class SortedTreeWidgetItem : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+
+private:
+    bool operator<(const QTreeWidgetItem &other) const override;
+};
 
 /**
  * @brief The ProtocolWidget class
@@ -45,14 +61,15 @@ public:
     ~ProtocolWidget();
     QSize sizeHint() const { return ownCloudGui::settingsDialogSize(); }
 
-    QTreeWidget *issueWidget() { return _issueItemView; }
-    void storeSyncActivity(QTextStream& ts);
-    void storeSyncIssues(QTextStream& ts);
+    void storeSyncActivity(QTextStream &ts);
+
+    // Shared with IssueWidget
+    static QTreeWidgetItem *createCompletedTreewidgetItem(const QString &folder, const SyncFileItem &item);
+    static QString timeString(QDateTime dt, QLocale::FormatType format = QLocale::NarrowFormat);
 
 public slots:
-    void slotProgressInfo( const QString& folder, const ProgressInfo& progress );
-    void slotItemCompleted( const QString& folder, const SyncFileItem& item, const PropagatorJob& job);
-    void slotOpenFile( QTreeWidgetItem* item, int );
+    void slotItemCompleted(const QString &folder, const SyncFileItemPtr &item);
+    void slotOpenFile(QTreeWidgetItem *item, int);
 
 protected:
     void showEvent(QShowEvent *);
@@ -60,20 +77,9 @@ protected:
 
 signals:
     void copyToClipboard();
-    void issueItemCountUpdated(int);
 
 private:
-    void setSyncResultStatus(const SyncResult& result );
-    void cleanItems( const QString& folder );
-
-    QTreeWidgetItem* createCompletedTreewidgetItem(const QString &folder, const SyncFileItem &item );
-
-    QString timeString(QDateTime dt, QLocale::FormatType format = QLocale::NarrowFormat) const;
-
-    const int IgnoredIndicatorRole;
     Ui::ProtocolWidget *_ui;
-    QTreeWidget *_issueItemView;
 };
-
 }
 #endif // PROTOCOLWIDGET_H

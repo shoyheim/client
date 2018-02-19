@@ -17,15 +17,24 @@
 #define MIRALL_OWNCLOUD_WIZARD_H
 
 #include <QWizard>
+#include <QLoggingCategory>
+#include <QSslKey>
+#include <QSslCertificate>
 
+#include "networkjobs.h"
 #include "wizard/owncloudwizardcommon.h"
 #include "accountfwd.h"
 
 namespace OCC {
 
+Q_DECLARE_LOGGING_CATEGORY(lcWizard)
+
 class OwncloudSetupPage;
 class OwncloudHttpCredsPage;
+class OwncloudOAuthCredsPage;
+#ifndef NO_SHIBBOLETH
 class OwncloudShibbolethCredsPage;
+#endif
 class OwncloudAdvancedSetupPage;
 class OwncloudWizardResultPage;
 class AbstractCredentials;
@@ -39,61 +48,65 @@ class OwncloudWizard : public QWizard
 {
     Q_OBJECT
 public:
-
     enum LogType {
-      LogPlain,
-      LogParagraph
+        LogPlain,
+        LogParagraph
     };
 
     OwncloudWizard(QWidget *parent = 0);
 
     void setAccount(AccountPtr account);
     AccountPtr account() const;
-    void setOCUrl( const QString& );
+    void setOCUrl(const QString &);
 
-    void setupCustomMedia( QVariant, QLabel* );
+    void setupCustomMedia(QVariant, QLabel *);
     QString ocUrl() const;
     QString localFolder() const;
     QStringList selectiveSyncBlacklist() const;
+    bool isConfirmBigFolderChecked() const;
 
     void enableFinishOnResultWidget(bool enable);
 
-    void displayError( const QString&, bool retryHTTPonly);
-    AbstractCredentials* getCredentials() const;
+    void displayError(const QString &, bool retryHTTPonly);
+    AbstractCredentials *getCredentials() const;
 
-    void raiseCertificatePopup();
-    QByteArray ownCloudCertificate;
-    QString ownCloudPrivateKey;
-    QString ownCloudCertificatePath;
-    QString ownCloudCertificatePasswd;
+    // FIXME: Can those be local variables?
+    // Set from the OwncloudSetupPage, later used from OwncloudHttpCredsPage
+    QSslKey _clientSslKey;
+    QSslCertificate _clientSslCertificate;
 
 public slots:
-    void setAuthType(WizardCommon::AuthType type);
-    void setRemoteFolder( const QString& );
-    void appendToConfigurationLog( const QString& msg, LogType type = LogParagraph );
-    void slotCurrentPageChanged( int );
+    void setAuthType(DetermineAuthTypeJob::AuthType type);
+    void setRemoteFolder(const QString &);
+    void appendToConfigurationLog(const QString &msg, LogType type = LogParagraph);
+    void slotCurrentPageChanged(int);
     void successfulStep();
 
 signals:
     void clearPendingRequests();
-    void determineAuthType(const QString&);
-    void connectToOCUrl( const QString& );
-    void createLocalAndRemoteFolders(const QString&, const QString&);
+    void determineAuthType(const QString &);
+    void connectToOCUrl(const QString &);
+    void createLocalAndRemoteFolders(const QString &, const QString &);
     // make sure to connect to this, rather than finished(int)!!
-    void basicSetupFinished( int );
+    void basicSetupFinished(int);
     void skipFolderConfiguration();
     void needCertificate();
 
 private:
     AccountPtr _account;
-    OwncloudSetupPage* _setupPage;
-    OwncloudHttpCredsPage* _httpCredsPage;
-    OwncloudShibbolethCredsPage* _shibbolethCredsPage;
-    OwncloudAdvancedSetupPage* _advancedSetupPage;
-    OwncloudWizardResultPage* _resultPage;
-    AbstractCredentialsWizardPage* _credentialsPage;
+    OwncloudSetupPage *_setupPage;
+    OwncloudHttpCredsPage *_httpCredsPage;
+    OwncloudOAuthCredsPage *_browserCredsPage;
+#ifndef NO_SHIBBOLETH
+    OwncloudShibbolethCredsPage *_shibbolethCredsPage;
+#endif
+    OwncloudAdvancedSetupPage *_advancedSetupPage;
+    OwncloudWizardResultPage *_resultPage;
+    AbstractCredentialsWizardPage *_credentialsPage;
 
     QStringList _setupLog;
+
+    friend class OwncloudSetupWizard;
 };
 
 } // namespace OCC

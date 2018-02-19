@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -30,9 +31,9 @@ namespace OCC {
 static int patternCol = 0;
 static int deletableCol = 1;
 
-IgnoreListEditor::IgnoreListEditor(QWidget *parent) :
-    QDialog(parent),
-    ui(new Ui::IgnoreListEditor)
+IgnoreListEditor::IgnoreListEditor(QWidget *parent)
+    : QDialog(parent)
+    , ui(new Ui::IgnoreListEditor)
 {
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     ui->setupUi(this);
@@ -45,21 +46,25 @@ IgnoreListEditor::IgnoreListEditor(QWidget *parent) :
     ConfigFile cfgFile;
     readOnlyTooltip = tr("This entry is provided by the system at '%1' "
                          "and cannot be modified in this view.")
-            .arg(QDir::toNativeSeparators(cfgFile.excludeFile(ConfigFile::SystemScope)));
+                          .arg(QDir::toNativeSeparators(cfgFile.excludeFile(ConfigFile::SystemScope)));
 
+    addPattern(".csync_journal.db*", /*deletable=*/false, /*readonly=*/true);
+    addPattern("._sync_*.db*", /*deletable=*/false, /*readonly=*/true);
+    addPattern(".sync_*.db*", /*deletable=*/false, /*readonly=*/true);
     readIgnoreFile(cfgFile.excludeFile(ConfigFile::SystemScope), true);
     readIgnoreFile(cfgFile.excludeFile(ConfigFile::UserScope), false);
 
-    connect(this, SIGNAL(accepted()), SLOT(slotUpdateLocalIgnoreList()));
+    connect(this, &QDialog::accepted, this, &IgnoreListEditor::slotUpdateLocalIgnoreList);
     ui->removePushButton->setEnabled(false);
-    connect(ui->tableWidget, SIGNAL(itemSelectionChanged()), SLOT(slotItemSelectionChanged()));
-    connect(ui->removePushButton, SIGNAL(clicked()), SLOT(slotRemoveCurrentItem()));
-    connect(ui->addPushButton, SIGNAL(clicked()), SLOT(slotAddPattern()));
+    connect(ui->tableWidget, &QTableWidget::itemSelectionChanged, this, &IgnoreListEditor::slotItemSelectionChanged);
+    connect(ui->removePushButton, &QAbstractButton::clicked, this, &IgnoreListEditor::slotRemoveCurrentItem);
+    connect(ui->addPushButton, &QAbstractButton::clicked, this, &IgnoreListEditor::slotAddPattern);
 
+    ui->tableWidget->resizeColumnsToContents();
     ui->tableWidget->horizontalHeader()->setResizeMode(patternCol, QHeaderView::Stretch);
     ui->tableWidget->verticalHeader()->setVisible(false);
 
-    ui->syncHiddenFilesCheckBox->setChecked( !FolderMan::instance()->ignoreHiddenFiles() );
+    ui->syncHiddenFilesCheckBox->setChecked(!FolderMan::instance()->ignoreHiddenFiles());
 }
 
 IgnoreListEditor::~IgnoreListEditor()
@@ -69,7 +74,7 @@ IgnoreListEditor::~IgnoreListEditor()
 
 bool IgnoreListEditor::ignoreHiddenFiles()
 {
-    return ! ui->syncHiddenFilesCheckBox->isChecked();
+    return !ui->syncHiddenFilesCheckBox->isChecked();
 }
 
 void IgnoreListEditor::slotItemSelectionChanged()
@@ -95,24 +100,26 @@ void IgnoreListEditor::slotUpdateLocalIgnoreList()
     QString ignoreFile = cfgFile.excludeFile(ConfigFile::UserScope);
     QFile ignores(ignoreFile);
     if (ignores.open(QIODevice::WriteOnly)) {
-        for(int row = 0; row < ui->tableWidget->rowCount(); ++row) {
+        for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
             QTableWidgetItem *patternItem = ui->tableWidget->item(row, patternCol);
             QTableWidgetItem *deletableItem = ui->tableWidget->item(row, deletableCol);
             if (patternItem->flags() & Qt::ItemIsEnabled) {
                 QByteArray prepend;
                 if (deletableItem->checkState() == Qt::Checked) {
                     prepend = "]";
+                } else if (patternItem->text().startsWith('#')) {
+                    prepend = "\\";
                 }
-                ignores.write(prepend+patternItem->text().toUtf8()+'\n');
+                ignores.write(prepend + patternItem->text().toUtf8() + '\n');
             }
         }
     } else {
         QMessageBox::warning(this, tr("Could not open file"),
-                             tr("Cannot write changes to '%1'.").arg(ignoreFile));
+            tr("Cannot write changes to '%1'.").arg(ignoreFile));
     }
     ignores.close(); //close the file before reloading stuff.
 
-    FolderMan * folderMan = FolderMan::instance();
+    FolderMan *folderMan = FolderMan::instance();
 
     /* handle the hidden file checkbox */
 
@@ -124,9 +131,9 @@ void IgnoreListEditor::slotUpdateLocalIgnoreList()
     // We need to force a remote discovery after a change of the ignore list.
     // Otherwise we would not download the files/directories that are no longer
     // ignored (because the remote etag did not change)   (issue #3172)
-    foreach (Folder* folder, folderMan->map()) {
+    foreach (Folder *folder, folderMan->map()) {
         folder->journalDb()->forceRemoteDiscoveryNextSync();
-        folderMan->slotScheduleSync(folder);
+        folderMan->scheduleFolder(folder);
     }
 
     ExcludedFiles::instance().reloadExcludes();
@@ -136,8 +143,8 @@ void IgnoreListEditor::slotAddPattern()
 {
     bool okClicked;
     QString pattern = QInputDialog::getText(this, tr("Add Ignore Pattern"),
-                                            tr("Add a new ignore pattern:"),
-                                            QLineEdit::Normal, QString(), &okClicked);
+        tr("Add a new ignore pattern:"),
+        QLineEdit::Normal, QString(), &okClicked);
 
     if (!okClicked || pattern.isEmpty())
         return;

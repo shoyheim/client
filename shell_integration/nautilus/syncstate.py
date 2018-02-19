@@ -18,6 +18,7 @@
 import os
 import urllib
 import socket
+import tempfile
 
 from gi.repository import GObject, Nautilus
 
@@ -43,7 +44,7 @@ def get_runtime_dir():
     try:
         return os.environ['XDG_RUNTIME_DIR']
     except KeyError:
-        fallback = '/tmp/runtime-' + os.environ['USER']
+        fallback = os.path.join(tempfile.gettempdir(), 'runtime-' + os.environ['USER'])
         return fallback
 
 
@@ -86,22 +87,20 @@ class SocketConnect(GObject.GObject):
     def _connectToSocketServer(self):
         try:
             self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            postfix = "/" + appname + "/socket"  # Should use os.path.join instead
-            sock_file = get_runtime_dir() + postfix
-            print ("Socket: " + sock_file + " <=> " + postfix)
-            if sock_file != postfix:
-                try:
-                    print("Socket File: " + sock_file)
-                    self._sock.connect(sock_file)
-                    self.connected = True
-                    print("Setting connected to %r." % self.connected )
-                    self._watch_id = GObject.io_add_watch(self._sock, GObject.IO_IN, self._handle_notify)
-                    print("Socket watch id: " + str(self._watch_id))
-                    return False  # Don't run again
-                except Exception as e:
-                    print("Could not connect to unix socket. " + str(e))
-            else:
-                print("Sock-File not valid: " + sock_file)
+            sock_file = os.path.join(get_runtime_dir(), appname, "socket")
+            try:
+                print("Socket File: " + sock_file)
+                self._sock.connect(sock_file) # fails if sock_file doesn't exist
+                self.connected = True
+                print("Setting connected to %r." % self.connected )
+                self._watch_id = GObject.io_add_watch(self._sock, GObject.IO_IN, self._handle_notify)
+                print("Socket watch id: " + str(self._watch_id))
+
+                self.sendCommand('GET_STRINGS:\n')
+
+                return False  # Don't run again
+            except Exception as e:
+                print("Could not connect to unix socket. " + str(e))
         except Exception as e:  # Bad habbit
             print("Connect could not be established, try again later.")
             self._sock.close()
@@ -157,48 +156,109 @@ class MenuExtension(GObject.GObject, Nautilus.MenuProvider):
     def __init__(self):
         GObject.GObject.__init__(self)
 
+        self.strings = {}
+        socketConnect.addListener(self.handle_commands)
+
+    def handle_commands(self, action, args):
+        if action == 'STRING':
+            self.strings[args[0]] = ':'.join(args[1:])
+
+    def check_registered_paths(self, filename):
+        topLevelFolder = False
+        internalFile = False
+        for reg_path in socketConnect.registered_paths:
+            if filename == reg_path:
+                topLevelFolder = True
+                break
+            if filename.startswith(reg_path):
+                internalFile = True
+                # you can't have a registered path below another so it is save to break here
+                break
+        return (topLevelFolder, internalFile)
+
     def get_file_items(self, window, files):
+        # Show the menu extension to share a file or folder
+        #
+        # Show if file is OK.
+        # Ignore top level folders.
+        # Also show extension for folders
+        #  if there is a OK or SYNC underneath.
+        # This is only
+
         if len(files) != 1:
             return
         file = files[0]
-        items = []
 
-        # Internal or external file?!
-        syncedFile = False
-        for reg_path in socketConnect.registered_paths:
-            topLevelFolder = False
-            filename = get_local_path(file.get_uri())
-            # Check if its a folder (ends with an /), if yes add a "/"
-            # otherwise it will not find the entry in the table
-            if os.path.isdir(filename + "/"):
-                filename += "/"
-                # Check if toplevel folder, we need to ignore those as they cannot be shared
-                if filename == reg_path:
-                    topLevelFolder=True                
-            # Only show the menu extension if the file is synced and the sync
-            # status is ok. Not for ignored files etc.
-            # ignore top level folders
-            if filename.startswith(reg_path) and topLevelFolder == False and socketConnect.nautilusVFSFile_table[filename]['state'].startswith('OK'):
-                syncedFile = True
-
-        # If it is neither in a synced folder or is a directory
-        if not syncedFile:
-            return items
-
-        # Create a menu item
-        labelStr = "Share with " + appname + "..."
-        item = Nautilus.MenuItem(name='NautilusPython::ShareItem', label=labelStr,
-                tip='Share file {} through {}'.format(file.get_name(), appname) )
-        item.connect("activate", self.menu_share, file)
-        items.append(item)
-
-        return items
-
-
-    def menu_share(self, menu, file):
         filename = get_local_path(file.get_uri())
-        print("Share file " + filename)
-        socketConnect.sendCommand("SHARE:" + filename + "\n")
+        # Check if its a folder (ends with an /), if yes add a "/"
+        # otherwise it will not find the entry in the table
+        isDir = os.path.isdir(filename + os.sep)
+        if isDir:
+            filename += os.sep
+
+        # Check if toplevel folder, we need to ignore those as they cannot be shared
+        topLevelFolder, internalFile = self.check_registered_paths(filename)
+        if topLevelFolder or not internalFile:
+            return []
+
+        entry = socketConnect.nautilusVFSFile_table.get(filename)
+        if not entry:
+            return []
+
+        # Currently 'sharable' also controls access to private link actions,
+        # and we definitely don't want to show them for IGNORED.
+        shareable = False
+        state = entry['state']
+        state_ok = state.startswith('OK')
+        state_sync = state.startswith('SYNC')
+        if state_ok:
+            shareable = True
+        elif state_sync and isDir:
+            # some file below is OK or SYNC
+            for key, value in socketConnect.nautilusVFSFile_table.items():
+                if key != filename and key.startswith(filename):
+                    state = value['state']
+                    if state.startswith('OK') or state.startswith('SYNC'):
+                        shareable = True
+                        break
+
+        if not shareable:
+            return []
+
+        # Set up the 'ownCloud...' submenu
+        item_owncloud = Nautilus.MenuItem(
+            name='IntegrationMenu', label=self.strings.get('CONTEXT_MENU_TITLE', appname))
+        menu = Nautilus.Menu()
+        item_owncloud.set_submenu(menu)
+
+        # Add share menu option
+        item = Nautilus.MenuItem(
+            name='NautilusPython::ShareItem',
+            label=self.strings.get('SHARE_MENU_TITLE', 'Share...'))
+        item.connect("activate", self.context_menu_action, 'SHARE', file)
+        menu.append_item(item)
+
+        # Add permalink menu options, but hide these options for older clients
+        # that don't have these actions.
+        if 'COPY_PRIVATE_LINK_MENU_TITLE' in self.strings:
+            item_copyprivatelink = Nautilus.MenuItem(
+                name='CopyPrivateLink', label=self.strings.get('COPY_PRIVATE_LINK_MENU_TITLE', 'Copy private link to clipboard'))
+            item_copyprivatelink.connect("activate", self.context_menu_action, 'COPY_PRIVATE_LINK', file)
+            menu.append_item(item_copyprivatelink)
+
+        if 'EMAIL_PRIVATE_LINK_MENU_TITLE' in self.strings:
+            item_emailprivatelink = Nautilus.MenuItem(
+                name='EmailPrivateLink', label=self.strings.get('EMAIL_PRIVATE_LINK_MENU_TITLE', 'Send private link by email...'))
+            item_emailprivatelink.connect("activate", self.context_menu_action, 'EMAIL_PRIVATE_LINK', file)
+            menu.append_item(item_emailprivatelink)
+
+        return [item_owncloud]
+
+
+    def context_menu_action(self, menu, action, file):
+        filename = get_local_path(file.get_uri())
+        print("Context menu: " + action + ' ' + filename)
+        socketConnect.sendCommand(action + ":" + filename + "\n")
 
 
 class SyncStateExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvider):
@@ -303,7 +363,7 @@ class SyncStateExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.Info
 
         filename = get_local_path(item.get_uri())
         if item.is_directory():
-            filename += '/'
+            filename += os.sep
 
         inScope = False
         for reg_path in socketConnect.registered_paths:

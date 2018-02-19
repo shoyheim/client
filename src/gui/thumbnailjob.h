@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -26,10 +27,11 @@ namespace OCC {
  * Job that allows fetching a preview (of 150x150 for now) of a given file.
  * Once the job has finished the jobFinished signal will be emitted.
  */
-class ThumbnailJob : public AbstractNetworkJob {
+class ThumbnailJob : public AbstractNetworkJob
+{
     Q_OBJECT
 public:
-    explicit ThumbnailJob(const QString& path, AccountPtr account, QObject* parent = 0);
+    explicit ThumbnailJob(const QString &path, AccountPtr account, QObject *parent = 0);
 public slots:
     void start() Q_DECL_OVERRIDE;
 signals:
@@ -45,7 +47,6 @@ signals:
 private slots:
     virtual bool finished() Q_DECL_OVERRIDE;
 };
-
 }
 
 #endif // THUMBNAILJOB_H

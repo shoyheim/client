@@ -22,16 +22,20 @@ namespace OCC {
  * @brief The PropagateRemoteMkdir class
  * @ingroup libsync
  */
-class PropagateRemoteMkdir : public PropagateItemJob {
+class PropagateRemoteMkdir : public PropagateItemJob
+{
     Q_OBJECT
     QPointer<AbstractNetworkJob> _job;
     bool _deleteExisting;
     friend class PropagateDirectory; // So it can access the _item;
 public:
-    PropagateRemoteMkdir (OwncloudPropagator* propagator,const SyncFileItemPtr& item)
-        : PropagateItemJob(propagator, item), _deleteExisting(false) {}
+    PropagateRemoteMkdir(OwncloudPropagator *propagator, const SyncFileItemPtr &item)
+        : PropagateItemJob(propagator, item)
+        , _deleteExisting(false)
+    {
+    }
     void start() Q_DECL_OVERRIDE;
-    void abort() Q_DECL_OVERRIDE;
+    void abort(PropagatorJob::AbortType abortType) Q_DECL_OVERRIDE;
 
     // Creating a directory should be fast.
     bool isLikelyFinishedQuickly() Q_DECL_OVERRIDE { return true; }
@@ -51,5 +55,4 @@ private slots:
     void propfindError();
     void success();
 };
-
 }

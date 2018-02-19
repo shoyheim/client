@@ -3,7 +3,8 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
@@ -20,13 +21,12 @@
 #include <theme.h>
 
 #include <QTimer>
-#include <QDebug>
 
 namespace OCC {
 
 namespace {
-static const int defaultIntervalT = 30*1000;
-static const int failIntervalT = 5*1000;
+    static const int defaultIntervalT = 30 * 1000;
+    static const int failIntervalT = 5 * 1000;
 }
 
 QuotaInfo::QuotaInfo(AccountState *accountState, QObject *parent)
@@ -36,9 +36,9 @@ QuotaInfo::QuotaInfo(AccountState *accountState, QObject *parent)
     , _lastQuotaUsedBytes(0)
     , _active(false)
 {
-    connect(accountState, SIGNAL(stateChanged(int)),
-            SLOT(slotAccountStateChanged()));
-    connect(&_jobRestartTimer, SIGNAL(timeout()), SLOT(slotCheckQuota()));
+    connect(accountState, &AccountState::stateChanged,
+        this, &QuotaInfo::slotAccountStateChanged);
+    connect(&_jobRestartTimer, &QTimer::timeout, this, &QuotaInfo::slotCheckQuota);
     _jobRestartTimer.setSingleShot(true);
 }
 
@@ -72,7 +72,7 @@ void QuotaInfo::slotRequestFailed()
 
 bool QuotaInfo::canGetQuota() const
 {
-    if (! _accountState || !_active) {
+    if (!_accountState || !_active) {
         return false;
     }
     AccountPtr account = _accountState->account();
@@ -88,7 +88,7 @@ QString QuotaInfo::quotaBaseFolder() const
 
 void QuotaInfo::slotCheckQuota()
 {
-    if (! canGetQuota()) {
+    if (!canGetQuota()) {
         return;
     }
 
@@ -99,9 +99,10 @@ void QuotaInfo::slotCheckQuota()
 
     AccountPtr account = _accountState->account();
     _job = new PropfindJob(account, quotaBaseFolder(), this);
-    _job->setProperties(QList<QByteArray>() << "quota-available-bytes" << "quota-used-bytes");
-    connect(_job, SIGNAL(result(QVariantMap)), SLOT(slotUpdateLastQuota(QVariantMap)));
-    connect(_job, SIGNAL(networkError(QNetworkReply*)), SLOT(slotRequestFailed()));
+    _job->setProperties(QList<QByteArray>() << "quota-available-bytes"
+                                            << "quota-used-bytes");
+    connect(_job.data(), &PropfindJob::result, this, &QuotaInfo::slotUpdateLastQuota);
+    connect(_job.data(), &AbstractNetworkJob::networkError, this, &QuotaInfo::slotRequestFailed);
     _job->start();
 }
 
@@ -117,5 +118,4 @@ void QuotaInfo::slotUpdateLastQuota(const QVariantMap &result)
     _jobRestartTimer.start(defaultIntervalT);
     _lastQuotaRecieved = QDateTime::currentDateTime();
 }
-
 }
