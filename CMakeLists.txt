@@ -7,7 +7,7 @@ endif()
 project(client)
 
 set(BIN_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-set(OEM_THEME_DIR "${CMAKE_SOURCE_DIR}/fogtheme" CACHE STRING "Define directory containing a custom theme")
+set(OEM_THEME_DIR "${CMAKE_SOURCE_DIR}/fjittheme" CACHE STRING "Define directory containing a custom theme")
 
 if ( EXISTS ${OEM_THEME_DIR}/OEM.cmake )
      include ( ${OEM_THEME_DIR}/OEM.cmake )

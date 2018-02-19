@@ -1,9 +1,14 @@
 cmake_minimum_required(VERSION 2.6)
 cmake_policy(VERSION 2.8.0)
+if(POLICY CMP0020)
+  cmake_policy(SET CMP0020 NEW)
+endif()
 
 project(client)
 
+set(BIN_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(OEM_THEME_DIR "${CMAKE_SOURCE_DIR}/fjittheme" CACHE STRING "Define directory containing a custom theme")
+
 if ( EXISTS ${OEM_THEME_DIR}/OEM.cmake )
      include ( ${OEM_THEME_DIR}/OEM.cmake )
 else ()
@@ -16,11 +21,19 @@ else()
     set(APPLICATION_REV_DOMAIN_INSTALLER ${APPLICATION_REV_DOMAIN})
 endif()
 
-if (NOT DEFINED APPLICATION_SHORTNAME)
-     set ( APPLICATION_SHORTNAME ${APPLICATION_NAME} )
+# For usage in XML files we preprocess
+string(REPLACE "&" "&amp;" APPLICATION_NAME_XML_ESCAPED "${APPLICATION_NAME}")
+string(REPLACE "<" "&lt;" APPLICATION_NAME_XML_ESCAPED "${APPLICATION_NAME_XML_ESCAPED}")
+string(REPLACE ">" "&gt;" APPLICATION_NAME_XML_ESCAPED "${APPLICATION_NAME_XML_ESCAPED}")
+
+if (NOT DEFINED LINUX_PACKAGE_SHORTNAME)
+    set(LINUX_PACKAGE_SHORTNAME "${APPLICATION_SHORTNAME}")
 endif()
 
-set(PACKAGE "${APPLICATION_SHORTNAME}-client")
+if (NOT DEFINED PACKAGE)
+    set(PACKAGE "${LINUX_PACKAGE_SHORTNAME}-client")
+endif()
+
 set( CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules )
 
 if(NOT CRASHREPORTER_EXECUTABLE)
@@ -30,7 +43,13 @@ endif()
 include(Warnings)
 
 include(${CMAKE_SOURCE_DIR}/VERSION.cmake)
-include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR} "${CMAKE_CURRENT_BINARY_DIR}/src/mirall/")
+# For config.h
+include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR})
+# Allows includes based on src/ like #include "common/utility.h" or #include "csync/csync.h"
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/src
+)
 
 # disable the crashreporter if libcrashreporter-qt is not available or we're building for ARM
 if( CMAKE_SYSTEM_PROCESSOR MATCHES "arm" OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/libcrashreporter-qt/CMakeLists.txt")
@@ -51,9 +70,7 @@ endif()
 
 include(GNUInstallDirs)
 include(DefineInstallationPaths)
-include(QtVersionAbstraction)
-
-setup_qt()
+include(GenerateExportHeader)
 
 include(GetGitRevisionDescription)
 
@@ -62,7 +79,7 @@ get_git_head_revision(GIT_REFSPEC GIT_SHA1)
 # if we cannot get it from git, directly try .tag (packages)
 # this will work if the tar balls have been properly created
 # via git-archive.
-if (${GIT_SHA1} STREQUAL "GITDIR-NOTFOUND")
+if ("${GIT_SHA1}" STREQUAL "GITDIR-NOTFOUND")
     file(READ ${CMAKE_SOURCE_DIR}/.tag sha1_candidate)
     string(REPLACE "\n" "" sha1_candidate ${sha1_candidate})
     if (NOT ${sha1_candidate} STREQUAL "$Format:%H$")
@@ -111,7 +128,22 @@ if(NO_MSG_HANDLER)
    add_definitions(-DNO_MSG_HANDLER=1)
 endif()
 
-# this option creates only libocsync and libowncloudsync
+# this option builds the shell integration
+option(BUILD_SHELL_INTEGRATION "BUILD_SHELL_INTEGRATION" ON)
+
+# this option builds/installs the generic shell integration icons
+option(BUILD_SHELL_INTEGRATION_ICONS "BUILD_SHELL_INTEGRATION_ICONS" ON)
+
+# this options builds the dolphin integration plugin
+option(BUILD_SHELL_INTEGRATION_DOLPHIN "BUILD_SHELL_INTEGRATION_DOLPHIN" ON)
+
+# this options builds the nautilus (like) integration plugins
+option(BUILD_SHELL_INTEGRATION_NAUTILUS "BUILD_SHELL_INTEGRATION_NAUTILUS" ON)
+
+# this option builds the client
+option(BUILD_CLIENT "BUILD_CLIENT" ON)
+
+# this option creates only libocsync and libowncloudsync (NOTE: BUILD_CLIENT needs to be on)
 option(BUILD_LIBRARIES_ONLY "BUILD_LIBRARIES_ONLY" OFF)
 
 # When this option is enabled, 5xx errors are not added to the blacklist
@@ -122,61 +154,56 @@ if(OWNCLOUD_5XX_NO_BLACKLIST)
     add_definitions(-DOWNCLOUD_5XX_NO_BLACKLIST=1)
 endif()
 
+# When this option is enabled, a rename that is not allowed will be renamed back
+# do the original as a restoration step.  Withut this option, the restoration will
+# re-download the file instead.
+# The default is off because we don't want to rename the files back behind the user's back
+# Added for IL issue #550
+option(OWNCLOUD_RESTORE_RENAME "OWNCLOUD_RESTORE_RENAME" OFF)
+if(OWNCLOUD_RESTORE_RENAME)
+    add_definitions(-DOWNCLOUD_RESTORE_RENAME=1)
+endif()
+
+# Disable shibboleth.
+# So the client can be built without QtWebKit
+option(NO_SHIBBOLETH "Build without Shibboleth support. Allow to build the client without QtWebKit" OFF)
+if(NO_SHIBBOLETH)
+   message("Compiling without shibboleth")
+   add_definitions(-DNO_SHIBBOLETH=1)
+endif()
+
 if(APPLE)
   set( SOCKETAPI_TEAM_IDENTIFIER_PREFIX "" CACHE STRING "SocketApi prefix (including a following dot) that must match the codesign key's TeamIdentifier/Organizational Unit" )
 endif()
 
-#### find libs
-#find_package(Qt4 4.7.0 COMPONENTS QtCore QtGui QtXml QtNetwork QtTest QtWebkit REQUIRED )
-#if( UNIX AND NOT APPLE ) # Fdo notifications
-#    find_package(Qt4 4.7.0 COMPONENTS QtDBus REQUIRED )
-#endif()
+if(BUILD_CLIENT)
+    if(APPLE)
+        find_package(Sparkle)
+    endif(APPLE)
 
-
-if(HAVE_QT5)
-  if (${Qt5Core_VERSION_MAJOR} EQUAL "5")
-    if (${Qt5Core_VERSION_MINOR} EQUAL "4" OR ${Qt5Core_VERSION_MINOR} GREATER 4)
+    if(UNIX)
+        find_package(INotify REQUIRED)
     else()
-      message(STATUS "If possible compile me with Qt 5.4 or higher.")
+        find_package(INotify)
     endif()
-  endif()
-else()
-  message(STATUS "If possible compile me with Qt 5.4 or higher.")
-endif()
+    find_package(Sphinx)
+    find_package(PdfLatex)
 
-find_package(OpenSSL 1.0.0 REQUIRED)
-
-if(NOT TOKEN_AUTH_ONLY)
-    if (Qt5Core_DIR)
-    find_package(Qt5Keychain REQUIRED)
-    else()
-    find_package(QtKeychain REQUIRED)
+    find_package(SQLite3 3.8.0 REQUIRED)
+    # On some OS, we want to use our own, not the system sqlite
+    if (USE_OUR_OWN_SQLITE3)
+        include_directories(BEFORE ${SQLITE3_INCLUDE_DIR})
+        if (WIN32)
+            add_definitions(-DSQLITE_API=__declspec\(dllimport\))
+        endif()
     endif()
+
+   find_package(ZLIB REQUIRED)
 endif()
 
-if(APPLE)
-  find_package(Sparkle)
-endif(APPLE)
-
-if(UNIX)
-  find_package(INotify REQUIRED)
-else()
-  find_package(INotify)
+if (NOT DEFINED APPLICATION_ICON_NAME)
+    set(APPLICATION_ICON_NAME ${APPLICATION_SHORTNAME})
 endif()
-find_package(Sphinx)
-find_package(PdfLatex)
-
-find_package(SQLite3 3.8.0 REQUIRED)
-# On some OS, we want to use our own, not the system sqlite
-if (USE_OUR_OWN_SQLITE3)
-    include_directories(BEFORE ${SQLITE3_INCLUDE_DIR})
-endif()
-
-find_package(ZLIB)
-
-configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
-
-configure_file(test/test_journal.db "${CMAKE_BINARY_DIR}/test/test_journal.db" COPYONLY)
 
 include(OwnCloudCPack.cmake)
 
@@ -184,20 +211,49 @@ add_definitions(-DUNICODE)
 add_definitions(-D_UNICODE)
 if( WIN32 )
 add_definitions( -D__USE_MINGW_ANSI_STDIO=1 )
+add_definitions( -DNOMINMAX )
 endif( WIN32 )
+
+include(QtVersionAbstraction)
+setup_qt()
+if (${Qt5Core_VERSION_MAJOR} EQUAL "5")
+    if (${Qt5Core_VERSION_MINOR} EQUAL "6" OR ${Qt5Core_VERSION_MINOR} GREATER 6)
+    else()
+      message(STATUS "If possible compile me with Qt 5.6 or higher.")
+    endif()
+    if (${Qt5Core_VERSION_MINOR} EQUAL "9" OR ${Qt5Core_VERSION_MINOR} GREATER 9)
+    else()
+      message(STATUS "For HTTP2 use Qt 5.9.2 or higher.")
+    endif()
+endif()
+message("Qt ${Qt5Core_VERSION} at ${Qt5Core_INCLUDE_DIRS}")
+
+if (APPLE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
+endif()
 
 # Handle Translations, pick all client_* files from trans directory.
 file( GLOB TRANS_FILES ${CMAKE_SOURCE_DIR}/translations/client_*.ts)
 set(TRANSLATIONS ${TRANS_FILES})
 
-add_subdirectory(csync)
-add_subdirectory(src)
-if(NOT BUILD_LIBRARIES_ONLY)
-add_subdirectory(shell_integration)
-add_subdirectory(doc)
-add_subdirectory(doc/dev)
-add_subdirectory(admin)
-endif(NOT BUILD_LIBRARIES_ONLY)
+# Make sure we set this before recursing into child folders.
+set(WITH_TESTING ${UNIT_TESTING})
+
+if(BUILD_CLIENT)
+    add_subdirectory(src)
+    if(NOT BUILD_LIBRARIES_ONLY)
+        add_subdirectory(man)
+        add_subdirectory(doc)
+        add_subdirectory(doc/dev)
+        if(IS_DIRECTORY ${CMAKE_SOURCE_DIR}/admin)
+            add_subdirectory(admin)
+        endif(IS_DIRECTORY ${CMAKE_SOURCE_DIR}/admin)
+    endif(NOT BUILD_LIBRARIES_ONLY)
+endif()
+
+if(BUILD_SHELL_INTEGRATION)
+    add_subdirectory(shell_integration)
+endif()
 
 if(UNIT_TESTING)
     include(CTest)
@@ -205,10 +261,13 @@ if(UNIT_TESTING)
     add_subdirectory(test)
 endif(UNIT_TESTING)
 
+configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+configure_file(version.h.in ${CMAKE_CURRENT_BINARY_DIR}/version.h)
+
 if(BUILD_OWNCLOUD_OSX_BUNDLE)
     install(FILES sync-exclude.lst DESTINATION ${OWNCLOUD_OSX_BUNDLE}/Contents/Resources/)
     configure_file(sync-exclude.lst bin/${OWNCLOUD_OSX_BUNDLE}/Contents/Resources/sync-exclude.lst COPYONLY)
-else()
+elseif(BUILD_CLIENT)
     install( FILES sync-exclude.lst DESTINATION ${SYSCONFDIR}/${APPLICATION_SHORTNAME} )
     configure_file(sync-exclude.lst bin/sync-exclude.lst COPYONLY)
 endif()
