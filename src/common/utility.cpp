@@ -105,7 +105,14 @@ QString Utility::formatFingerprint(const QByteArray &fmhash, bool colonSeparated
 
 void Utility::setupFavLink(const QString &folder)
 {
-    setupFavLink_private(folder);
+	setupFavLink_private(folder);
+	updateNavPanel(folder);
+}
+
+void Utility::updateNavPanel(const QString &folder)
+{
+	if (Utility::isWindows())
+		updateNavPanel_private(folder);
 }
 
 QString Utility::octetsToString(qint64 octets)
