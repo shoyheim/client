@@ -102,6 +102,7 @@ namespace Utility {
 
     // convenience OS detection methods
     inline bool isWindows();
+    OCSYNC_EXPORT bool isAtLeastWindows10();
     inline bool isMac();
     inline bool isUnix();
     inline bool isLinux(); // use with care

@@ -5,9 +5,9 @@ if [ $# -lt 1 ]; then
   exit
 fi
 
-useradd user -u ${2:-1000}
-su - user << EOF
-  cd /home/user/$1
+useradd utvikling -u ${2:-1000}
+su - utvikling << EOF
+  cd /home/utvikling/$1
   rm -rf build-win32
   mkdir build-win32
   cd build-win32

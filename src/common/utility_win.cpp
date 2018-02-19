@@ -27,6 +27,8 @@
 #include <QLibrary>
 
 static const char runPathC[] = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+static const char panePathC[] = "Software\\Classes\\CLSID\\{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}\\Instance\\InitPropertyBag";
+static const char panePath2C[] = "Software\\Classes\\Wow6432Node\\CLSID\\{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}\\Instance\\InitPropertyBag";
 
 namespace OCC {
 

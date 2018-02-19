@@ -583,4 +583,17 @@ bool Utility::shouldUploadConflictFiles()
     return uploadConflictFiles;
 }
 
+bool Utility::isAtLeastWindows10()
+{
+#ifdef Q_OS_WIN
+    if(QSysInfor::WindowsVersion > QSysInfo::WV::WV_WINDOWS8_1){
+        return true;
+    }else{
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+
 } // namespace OCC
