@@ -593,7 +593,7 @@ bool Utility::shouldUploadConflictFiles()
 bool Utility::isAtLeastWindows10()
 {
 #ifdef Q_OS_WIN
-    if(QSysInfor::WindowsVersion > QSysInfo::WV::WV_WINDOWS8_1){
+	if (QSysInfo::WindowsVersion > QSysInfo::WV_WINDOWS8_1) {
         return true;
     }else{
         return false;
