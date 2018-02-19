@@ -15,10 +15,8 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
-#ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
-#endif
-#define WINVER 0x0600
+
+#include "asserts.h"
 #include <shlobj.h>
 #include <winbase.h>
 #include <windows.h>
