@@ -32,7 +32,6 @@
 #include <QObject>
 #include <QThread>
 #include <QDateTime>
-#include <QSysInfo>
 #include <QStandardPaths>
 #include <QCollator>
 #include <QSysInfo>
