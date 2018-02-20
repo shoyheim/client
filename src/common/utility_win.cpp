@@ -16,10 +16,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#define _WIN32_WINNT 0x0600
+#define WINVER 0x0600
+
+#include <windows.h>
 #include "asserts.h"
 #include <shlobj.h>
 #include <winbase.h>
-#include <windows.h>
 #include <winerror.h>
 #include <shlguid.h>
 #include <string>
