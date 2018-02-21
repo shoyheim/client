@@ -1,4 +1,5 @@
 set( APPLICATION_NAME       "GreenDataStorage" )
+set( APPLICATION_SHORTNAME  "GreenDataStorage" )
 set( APPLICATION_EXECUTABLE "GreenDataStorage" )
 set( APPLICATION_DOMAIN     "www.green-data-storage.com" )
 set( APPLICATION_VENDOR     "Serit Fjordane IT AS" )
