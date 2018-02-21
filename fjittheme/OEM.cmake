@@ -1,4 +1,5 @@
 set( APPLICATION_NAME       "Skylagring" )
+set( APPLICATION_SHORTNAME  "Skylagring" )
 set( APPLICATION_EXECUTABLE "Skylagring" )
 set( APPLICATION_DOMAIN     "fil.fjit.no" )
 set( APPLICATION_VENDOR     "Serit Fjordane IT AS" )
