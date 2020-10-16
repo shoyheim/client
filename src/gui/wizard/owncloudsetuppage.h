@@ -40,15 +40,15 @@ class OwncloudSetupPage : public QWizardPage
 {
     Q_OBJECT
 public:
-    OwncloudSetupPage(QWidget *parent = 0);
-    ~OwncloudSetupPage();
+    OwncloudSetupPage(QWidget *parent = nullptr);
+    ~OwncloudSetupPage() override;
 
-    virtual bool isComplete() const Q_DECL_OVERRIDE;
-    virtual void initializePage() Q_DECL_OVERRIDE;
-    virtual int nextId() const Q_DECL_OVERRIDE;
+    bool isComplete() const override;
+    void initializePage() override;
+    int nextId() const override;
     void setServerUrl(const QString &);
     void setAllowPasswordStorage(bool);
-    bool validatePage() Q_DECL_OVERRIDE;
+    bool validatePage() override;
     QString url() const;
     QString localFolder() const;
     void setRemoteFolder(const QString &remoteFolder);
@@ -71,8 +71,6 @@ signals:
     void determineAuthType(const QString &);
 
 private:
-    bool urlHasChanged();
-
     Ui_OwncloudSetupPage _ui;
 
     QString _oCUrl;
@@ -80,7 +78,6 @@ private:
     bool _authTypeKnown;
     bool _checking;
     bool _multipleFoldersExist;
-    DetermineAuthTypeJob::AuthType _authType;
 
     QProgressIndicator *_progressIndi;
     QButtonGroup *_selectiveSyncButtons;

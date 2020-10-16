@@ -30,12 +30,18 @@ namespace OCC {
 
 class Folder;
 
+class AboutDialog;
 class SettingsDialog;
-class SettingsDialogMac;
 class ShareDialog;
 class Application;
 class LogBrowser;
 class AccountState;
+class OwncloudSetupWizard;
+
+enum class ShareDialogStartPage {
+    UsersAndGroups,
+    PublicLinks,
+};
 
 /**
  * @brief The ownCloudGui class
@@ -45,16 +51,22 @@ class ownCloudGui : public QObject
 {
     Q_OBJECT
 public:
-    explicit ownCloudGui(Application *parent = 0);
+    explicit ownCloudGui(Application *parent = nullptr);
+    ~ownCloudGui() override;
 
     bool checkAccountExists(bool openSettings);
 
     static void raiseDialog(QWidget *raiseWidget);
-    static QSize settingsDialogSize() { return QSize(800, 500); }
     void setupOverlayIcons();
 
     /// Whether the tray menu is visible
     bool contextMenuVisible() const;
+
+    void hideAndShowTray();
+
+    SettingsDialog *settingsDialog() const;
+
+    void runNewAccountWizard();
 
 signals:
     void setupProxy();
@@ -82,6 +94,7 @@ public slots:
     void slotOpenOwnCloud();
     void slotOpenSettingsDialog();
     void slotHelp();
+    void slotAbout();
     void slotOpenPath(const QString &path);
     void slotAccountStateChanged();
     void slotTrayMessageIfServerUnsupported(Account *account);
@@ -93,7 +106,7 @@ public slots:
      * localPath is the absolute local path to it (so not relative
      * to the folder).
      */
-    void slotShowShareDialog(const QString &sharePath, const QString &localPath);
+    void slotShowShareDialog(const QString &sharePath, const QString &localPath, ShareDialogStartPage startPage);
 
     void slotRemoveDestroyedShareDialogs();
 
@@ -102,31 +115,30 @@ private slots:
     void slotLogout();
     void slotUnpauseAllFolders();
     void slotPauseAllFolders();
-    void slotNewAccountWizard();
 
 private:
     void setPauseOnAllFoldersHelper(bool pause);
     void setupActions();
     void addAccountContextMenu(AccountStatePtr accountState, QMenu *menu, bool separateMenu);
 
-    QPointer<Systray> _tray;
-#if defined(Q_OS_MAC)
-    QPointer<SettingsDialogMac> _settingsDialog;
-#else
-    QPointer<SettingsDialog> _settingsDialog;
-#endif
-    QPointer<LogBrowser> _logBrowser;
+    Systray *_tray;
+    SettingsDialog *_settingsDialog;
     // tray's menu
     QScopedPointer<QMenu> _contextMenu;
 
-    // Manually tracking whether the context menu is visible, but only works
-    // on OSX because aboutToHide is not reliable everywhere.
-    bool _contextMenuVisibleOsx;
+    // Manually tracking whether the context menu is visible via aboutToShow
+    // and aboutToHide. Unfortunately aboutToHide isn't reliable everywhere
+    // so this only gets used with _workaroundManualVisibility (when the tray's
+    // isVisible() is unreliable)
+    bool _contextMenuVisibleManual = false;
 
     QMenu *_recentActionsMenu;
     QVector<QMenu *> _accountMenus;
-    bool _qdbusmenuWorkaround;
-    QTimer _workaroundBatchTrayUpdate;
+    bool _workaroundShowAndHideTray = false;
+    bool _workaroundNoAboutToShowUpdate = false;
+    bool _workaroundFakeDoubleClick = false;
+    bool _workaroundManualVisibility = false;
+    QTimer _delayedTrayUpdateTimer;
     QMap<QString, QPointer<ShareDialog>> _shareDialogs;
 
     QAction *_actionLogin;
@@ -138,11 +150,17 @@ private:
     QAction *_actionEstimate;
     QAction *_actionRecent;
     QAction *_actionHelp;
+    QAction *_actionAbout;
     QAction *_actionQuit;
     QAction *_actionCrash;
+    QAction *_actionCrashEnforce;
+    QAction *_actionCrashFatal;
+
 
     QList<QAction *> _recentItemsActions;
     Application *_app;
+    QPointer<OwncloudSetupWizard> _wizard;
+    QPointer<AboutDialog> _aboutDialog;
 };
 
 } // namespace OCC

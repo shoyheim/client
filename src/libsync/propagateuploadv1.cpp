@@ -32,22 +32,28 @@
 #include <QDir>
 #include <cmath>
 #include <cstring>
+#include <memory>
 
 namespace OCC {
 
 void PropagateUploadFileV1::doStartUpload()
 {
-    _chunkCount = std::ceil(_item->_size / double(chunkSize()));
+    if (!propagator()->account()->capabilities().bigfilechunkingEnabled())
+    {
+        _chunkCount = 1;
+    } else {
+        _chunkCount = int(std::ceil(_item->_size / double(chunkSize())));
+    }
     _startChunk = 0;
-    _transferId = qrand() ^ _item->_modtime ^ (_item->_size << 16);
+    _transferId = uint(qrand()) ^ uint(_item->_modtime) ^ (uint(_item->_size) << 16);
 
     const SyncJournalDb::UploadInfo progressInfo = propagator()->_journal->getUploadInfo(_item->_file);
 
-    if (progressInfo._valid && progressInfo._modtime == _item->_modtime
+    if (progressInfo._valid && progressInfo.isChunked() && progressInfo._modtime == _item->_modtime && progressInfo._size == _item->_size
         && (progressInfo._contentChecksum == _item->_checksumHeader || progressInfo._contentChecksum.isEmpty() || _item->_checksumHeader.isEmpty())) {
         _startChunk = progressInfo._chunk;
         _transferId = progressInfo._transferid;
-        qCInfo(lcPropagateUpload) << _item->_file << ": Resuming from chunk " << _startChunk;
+        qCInfo(lcPropagateUploadV1) << _item->_file << ": Resuming from chunk " << _startChunk;
     } else if (_chunkCount <= 1 && !_item->_checksumHeader.isEmpty()) {
         // If there is only one chunk, write the checksum in the database, so if the PUT is sent
         // to the server, but the connection drops before we get the etag, we can check the checksum
@@ -55,12 +61,13 @@ void PropagateUploadFileV1::doStartUpload()
         SyncJournalDb::UploadInfo pi;
         pi._valid = true;
         pi._chunk = 0;
-        pi._transferid = _transferId;
+        pi._transferid = 0; // We set a null transfer id because it is not chunked.
         pi._modtime = _item->_modtime;
         pi._errorCount = 0;
         pi._contentChecksum = _item->_checksumHeader;
+        pi._size = _item->_size;
         propagator()->_journal->setUploadInfo(_item->_file, pi);
-        propagator()->_journal->commit("Upload info");
+        propagator()->_journal->commit(QStringLiteral("Upload info"));
     }
 
     _currentChunk = 0;
@@ -71,7 +78,7 @@ void PropagateUploadFileV1::doStartUpload()
 
 void PropagateUploadFileV1::startNextChunk()
 {
-    if (propagator()->_abortRequested.fetchAndAddRelaxed(0))
+    if (propagator()->_abortRequested)
         return;
 
     if (!_jobs.isEmpty() && _currentChunk + _startChunk >= _chunkCount - 1) {
@@ -82,27 +89,26 @@ void PropagateUploadFileV1::startNextChunk()
         // is sent last.
         return;
     }
-    quint64 fileSize = _item->_size;
+    qint64 fileSize = _item->_size;
     auto headers = PropagateUploadFileCommon::headers();
-    headers["OC-Total-Length"] = QByteArray::number(fileSize);
-    headers["OC-Chunk-Size"] = QByteArray::number(quint64(chunkSize()));
+    headers[QByteArrayLiteral("OC-Total-Length")] = QByteArray::number(fileSize);
+    headers[QByteArrayLiteral("OC-Chunk-Size")] = QByteArray::number(chunkSize());
 
     QString path = _item->_file;
 
-    UploadDevice *device = new UploadDevice(&propagator()->_bandwidthManager);
     qint64 chunkStart = 0;
     qint64 currentChunkSize = fileSize;
     bool isFinalChunk = false;
     if (_chunkCount > 1) {
         int sendingChunk = (_currentChunk + _startChunk) % _chunkCount;
         // XOR with chunk size to make sure everything goes well if chunk size changes between runs
-        uint transid = _transferId ^ chunkSize();
-        qCInfo(lcPropagateUpload) << "Upload chunk" << sendingChunk << "of" << _chunkCount << "transferid(remote)=" << transid;
-        path += QString("-chunking-%1-%2-%3").arg(transid).arg(_chunkCount).arg(sendingChunk);
+        uint transid = _transferId ^ uint(chunkSize());
+        qCInfo(lcPropagateUploadV1) << "Upload chunk" << sendingChunk << "of" << _chunkCount << "transferid(remote)=" << transid;
+        path += QStringLiteral("-chunking-%1-%2-%3").arg(transid).arg(_chunkCount).arg(sendingChunk);
 
-        headers["OC-Chunked"] = "1";
+        headers[QByteArrayLiteral("OC-Chunked")] = QByteArrayLiteral("1");
 
-        chunkStart = chunkSize() * quint64(sendingChunk);
+        chunkStart = chunkSize() * sendingChunk;
         currentChunkSize = chunkSize();
         if (sendingChunk == _chunkCount - 1) { // last chunk
             currentChunkSize = (fileSize % chunkSize());
@@ -115,16 +121,18 @@ void PropagateUploadFileV1::startNextChunk()
         // if there's only one chunk, it's the final one
         isFinalChunk = true;
     }
-    qCDebug(lcPropagateUpload) << _chunkCount << isFinalChunk << chunkStart << currentChunkSize;
+    qCDebug(lcPropagateUploadV1) << _chunkCount << isFinalChunk << chunkStart << currentChunkSize;
 
     if (isFinalChunk && !_transmissionChecksumHeader.isEmpty()) {
-        qCInfo(lcPropagateUpload) << propagator()->_remoteFolder + path << _transmissionChecksumHeader;
+        qCInfo(lcPropagateUploadV1) << propagator()->fullRemotePath(path) << _transmissionChecksumHeader;
         headers[checkSumHeaderC] = _transmissionChecksumHeader;
     }
 
-    const QString fileName = propagator()->getFilePath(_item->_file);
-    if (!device->prepareAndOpen(fileName, chunkStart, currentChunkSize)) {
-        qCWarning(lcPropagateUpload) << "Could not prepare upload device: " << device->errorString();
+    const QString fileName = propagator()->fullLocalPath(_item->_file);
+    auto device = std::unique_ptr<UploadDevice>(new UploadDevice(
+            fileName, chunkStart, currentChunkSize, &propagator()->_bandwidthManager));
+    if (!device->open(QIODevice::ReadOnly)) {
+        qCWarning(lcPropagateUploadV1) << "Could not prepare upload device: " << device->errorString();
 
         // If the file is currently locked, we want to retry the sync
         // when it becomes available again.
@@ -133,17 +141,19 @@ void PropagateUploadFileV1::startNextChunk()
         }
         // Soft error because this is likely caused by the user modifying his files while syncing
         abortWithError(SyncFileItem::SoftError, device->errorString());
-        delete device;
         return;
     }
 
     // job takes ownership of device via a QScopedPointer. Job deletes itself when finishing
-    PUTFileJob *job = new PUTFileJob(propagator()->account(), propagator()->_remoteFolder + path, device, headers, _currentChunk, this);
+    auto devicePtr = device.get(); // for connections later
+    PUTFileJob *job = new PUTFileJob(propagator()->account(), propagator()->fullRemotePath(path), std::move(device), headers, _currentChunk, this);
     _jobs.append(job);
     connect(job, &PUTFileJob::finishedSignal, this, &PropagateUploadFileV1::slotPutFinished);
     connect(job, &PUTFileJob::uploadProgress, this, &PropagateUploadFileV1::slotUploadProgress);
-    connect(job, &PUTFileJob::uploadProgress, device, &UploadDevice::slotJobUploadProgress);
+    connect(job, &PUTFileJob::uploadProgress, devicePtr, &UploadDevice::slotJobUploadProgress);
     connect(job, &QObject::destroyed, this, &PropagateUploadFileCommon::slotJobDestroyed);
+    if (isFinalChunk)
+        adjustLastJobTimeout(job, fileSize);
     job->start();
     propagator()->_activeJobList.append(this);
     _currentChunk++;
@@ -186,7 +196,7 @@ void PropagateUploadFileV1::startNextChunk()
 void PropagateUploadFileV1::slotPutFinished()
 {
     PUTFileJob *job = qobject_cast<PUTFileJob *>(sender());
-    ASSERT(job);
+    OC_ASSERT(job);
 
     slotJobDestroyed(job); // remove it from the _jobs list
 
@@ -197,28 +207,23 @@ void PropagateUploadFileV1::slotPutFinished()
         return;
     }
 
+    _item->_httpErrorCode = job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    _item->_responseTimeStamp = job->responseTimestamp();
+    _item->_requestId = job->requestId();
     QNetworkReply::NetworkError err = job->reply()->error();
-
     if (err != QNetworkReply::NoError) {
-        _item->_httpErrorCode = job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (checkForProblemsWithShared(_item->_httpErrorCode,
-                tr("The file was edited locally but is part of a read only share. "
-                   "It is restored and your edit is in the conflict file."))) {
-            return;
-        }
         commonErrorHandling(job);
         return;
     }
 
-    _item->_httpErrorCode = job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     // The server needs some time to process the request and provide us with a poll URL
     if (_item->_httpErrorCode == 202) {
-        _finished = true;
-        QString path = QString::fromUtf8(job->reply()->rawHeader("OC-Finish-Poll"));
+        QString path = QString::fromUtf8(job->reply()->rawHeader("OC-JobStatus-Location"));
         if (path.isEmpty()) {
             done(SyncFileItem::NormalError, tr("Poll URL missing"));
             return;
         }
+        _finished = true;
         startPollJob(path);
         return;
     }
@@ -233,12 +238,12 @@ void PropagateUploadFileV1::slotPutFinished()
     // yet, the upload can be stopped and an error can be displayed, because
     // the server hasn't registered the new file yet.
     QByteArray etag = getEtagFromReply(job->reply());
-    bool finished = etag.length() > 0;
+    _finished = etag.length() > 0;
 
     // Check if the file still exists
-    const QString fullFilePath(propagator()->getFilePath(_item->_file));
+    const QString fullFilePath(propagator()->fullLocalPath(_item->_file));
     if (!FileSystem::fileExists(fullFilePath)) {
-        if (!finished) {
+        if (!_finished) {
             abortWithError(SyncFileItem::SoftError, tr("The local file was removed during sync."));
             return;
         } else {
@@ -249,7 +254,7 @@ void PropagateUploadFileV1::slotPutFinished()
     // Check whether the file changed since discovery.
     if (!FileSystem::verifyFileUnchanged(fullFilePath, _item->_size, _item->_modtime)) {
         propagator()->_anotherSyncNeeded = true;
-        if (!finished) {
+        if (!_finished) {
             abortWithError(SyncFileItem::SoftError, tr("Local file changed during sync."));
             // FIXME:  the legacy code was retrying for a few seconds.
             //         and also checking that after the last chunk, and removed the file in case of INSTRUCTION_NEW
@@ -257,14 +262,13 @@ void PropagateUploadFileV1::slotPutFinished()
         }
     }
 
-    if (!finished) {
+    if (!_finished) {
         // Proceed to next chunk.
         if (_currentChunk >= _chunkCount) {
             if (!_jobs.empty()) {
                 // just wait for the other job to finish.
                 return;
             }
-            _finished = true;
             done(SyncFileItem::NormalError, tr("The server did not acknowledge the last chunk. (No e-tag was present)"));
             return;
         }
@@ -289,33 +293,30 @@ void PropagateUploadFileV1::slotPutFinished()
         pi._modtime = _item->_modtime;
         pi._errorCount = 0; // successful chunk upload resets
         pi._contentChecksum = _item->_checksumHeader;
+        pi._size = _item->_size;
         propagator()->_journal->setUploadInfo(_item->_file, pi);
-        propagator()->_journal->commit("Upload info");
+        propagator()->_journal->commit(QStringLiteral("Upload info"));
         startNextChunk();
         return;
     }
-
     // the following code only happens after all chunks were uploaded.
-    _finished = true;
+
     // the file id should only be empty for new files up- or downloaded
     QByteArray fid = job->reply()->rawHeader("OC-FileID");
     if (!fid.isEmpty()) {
         if (!_item->_fileId.isEmpty() && _item->_fileId != fid) {
-            qCWarning(lcPropagateUpload) << "File ID changed!" << _item->_fileId << fid;
+            qCWarning(lcPropagateUploadV1) << "File ID changed!" << _item->_fileId << fid;
         }
         _item->_fileId = fid;
     }
 
     _item->_etag = etag;
 
-    _item->_responseTimeStamp = job->responseTimestamp();
-
     if (job->reply()->rawHeader("X-OC-MTime") != "accepted") {
         // X-OC-MTime is supported since owncloud 5.0.   But not when chunking.
         // Normally Owncloud 6 always puts X-OC-MTime
-        qCWarning(lcPropagateUpload) << "Server does not support X-OC-MTime" << job->reply()->rawHeader("X-OC-MTime");
+        qCWarning(lcPropagateUploadV1) << "Server does not support X-OC-MTime" << job->reply()->rawHeader("X-OC-MTime");
         // Well, the mtime was not set
-        done(SyncFileItem::SoftError, "Server does not support X-OC-MTime");
     }
 
     finalize();
@@ -340,7 +341,7 @@ void PropagateUploadFileV1::slotUploadProgress(qint64 sent, qint64 total)
     // not including this one.
     // FIXME: this assumes all chunks have the same size, which is true only if the last chunk
     // has not been finished (which should not happen because the last chunk is sent sequentially)
-    quint64 amount = progressChunk * chunkSize();
+    qint64 amount = progressChunk * chunkSize();
 
     sender()->setProperty("byteWritten", sent);
     if (_jobs.count() > 1) {
@@ -357,28 +358,19 @@ void PropagateUploadFileV1::slotUploadProgress(qint64 sent, qint64 total)
 
 void PropagateUploadFileV1::abort(PropagatorJob::AbortType abortType)
 {
-    // Prepare abort
-    prepareAbort(abortType);
-
-    // Abort all jobs (if there are any left), except final PUT
-    foreach (AbstractNetworkJob *job, _jobs) {
-        if (job->reply()) {
-            // If asynchronous abort allowed,
-            // dont abort final PUT which uploaded its data,
-            // since this might result in conflicts
+    abortNetworkJobs(
+        abortType,
+        [this, abortType](AbstractNetworkJob *job) {
             if (PUTFileJob *putJob = qobject_cast<PUTFileJob *>(job)){
                 if (abortType == AbortType::Asynchronous
                     && _chunkCount > 0
                     && (((_currentChunk + _startChunk) % _chunkCount) == 0)
                     && putJob->device()->atEnd()) {
-                    continue;
+                    return false;
                 }
             }
-
-            // Abort the job
-            job->reply()->abort();
-        }
-    }
+            return true;
+        });
 }
 
 }

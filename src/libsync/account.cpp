@@ -65,9 +65,9 @@ QString Account::davPath() const
     }
 
     // make sure to have a trailing slash
-    if (!_davPath.endsWith('/')) {
+    if (!_davPath.endsWith(QLatin1Char('/'))) {
         QString dp(_davPath);
-        dp.append('/');
+        dp.append(QLatin1Char('/'));
         return dp;
     }
     return _davPath;
@@ -90,7 +90,10 @@ QString Account::davUser() const
 
 void Account::setDavUser(const QString &newDavUser)
 {
+    if (_davUser == newDavUser)
+        return;
     _davUser = newDavUser;
+    emit wantsAccountSaved(this);
 }
 
 #ifndef TOKEN_AUTH_ONLY
@@ -107,13 +110,15 @@ void Account::setAvatar(const QImage &img)
 
 QString Account::displayName() const
 {
-    QString dn = QString("%1@%2").arg(davUser(), _url.host());
-    int port = url().port();
+    QString user = davDisplayName();
+    if (user.isEmpty())
+        user = davUser();
+    QString host = _url.host();
+    const int port = url().port();
     if (port > 0 && port != 80 && port != 443) {
-        dn.append(QLatin1Char(':'));
-        dn.append(QString::number(port));
+        host += QStringLiteral(":%1").arg(QString::number(port));
     }
-    return dn;
+    return tr("%1@%2").arg(user, host);
 }
 
 QString Account::davDisplayName() const
@@ -140,10 +145,10 @@ AbstractCredentials *Account::credentials() const
 void Account::setCredentials(AbstractCredentials *cred)
 {
     // set active credential manager
-    QNetworkCookieJar *jar = 0;
+    QNetworkCookieJar *jar = nullptr;
     if (_am) {
         jar = _am->cookieJar();
-        jar->setParent(0);
+        jar->setParent(nullptr);
 
         _am = QSharedPointer<QNetworkAccessManager>();
     }
@@ -176,19 +181,13 @@ QUrl Account::davUrl() const
     return Utility::concatUrlPath(url(), davPath());
 }
 
-QUrl Account::deprecatedPrivateLinkUrl(const QByteArray &numericFileId) const
-{
-    return Utility::concatUrlPath(_userVisibleUrl,
-        QLatin1String("/index.php/f/") + QUrl::toPercentEncoding(QString::fromLatin1(numericFileId)));
-}
-
 /**
  * clear all cookies. (Session cookies or not)
  */
 void Account::clearCookieJar()
 {
     auto jar = qobject_cast<CookieJar *>(_am->cookieJar());
-    ASSERT(jar);
+    OC_ASSERT(jar);
     jar->setAllCookies(QList<QNetworkCookie>());
     emit wantsAccountSaved(this);
 }
@@ -206,7 +205,7 @@ void Account::lendCookieJarTo(QNetworkAccessManager *guest)
 
 QString Account::cookieJarPath()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/cookies" + id() + ".db";
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + QStringLiteral("/cookies") + id() + QStringLiteral(".db");
 }
 
 void Account::resetNetworkAccessManager()
@@ -259,7 +258,7 @@ QNetworkReply *Account::sendRawRequest(const QByteArray &verb, const QUrl &url, 
 
 SimpleNetworkJob *Account::sendRequest(const QByteArray &verb, const QUrl &url, QNetworkRequest req, QIODevice *data)
 {
-    auto job = new SimpleNetworkJob(sharedFromThis(), this);
+    auto job = new SimpleNetworkJob(sharedFromThis());
     job->startRequest(verb, url, req, data);
     return job;
 }
@@ -292,6 +291,7 @@ QSslConfiguration Account::getOrCreateSslConfig()
 void Account::setApprovedCerts(const QList<QSslCertificate> certs)
 {
     _approvedCerts = certs;
+    QSslSocket::addDefaultCaCertificates(certs);
 }
 
 void Account::addApprovedCerts(const QList<QSslCertificate> certs)
@@ -312,21 +312,15 @@ void Account::setSslErrorHandler(AbstractSslErrorHandler *handler)
 void Account::setUrl(const QUrl &url)
 {
     _url = url;
-    _userVisibleUrl = url;
-}
-
-void Account::setUserVisibleHost(const QString &host)
-{
-    _userVisibleUrl.setHost(host);
 }
 
 QVariant Account::credentialSetting(const QString &key) const
 {
     if (_credentials) {
         QString prefix = _credentials->authType();
-        QString value = _settingsMap.value(prefix + "_" + key).toString();
-        if (value.isEmpty()) {
-            value = _settingsMap.value(key).toString();
+        QVariant value = _settingsMap.value(prefix + QLatin1Char('_') + key);
+        if (value.isNull()) {
+            value = _settingsMap.value(key);
         }
         return value;
     }
@@ -337,7 +331,7 @@ void Account::setCredentialSetting(const QString &key, const QVariant &value)
 {
     if (_credentials) {
         QString prefix = _credentials->authType();
-        _settingsMap.insert(prefix + "_" + key, value);
+        _settingsMap.insert(prefix + QLatin1Char('_') + key, value);
     }
 }
 
@@ -382,11 +376,14 @@ void Account::slotHandleSslErrors(QNetworkReply *reply, QList<QSslError> errors)
         if (!guard)
             return;
 
-        QSslSocket::addDefaultCaCertificates(approvedCerts);
-        addApprovedCerts(approvedCerts);
-        emit wantsAccountSaved(this);
-        // all ssl certs are known and accepted. We can ignore the problems right away.
-        qCInfo(lcAccount) << out << "Certs are known and trusted! This is not an actual error.";
+        if (!approvedCerts.isEmpty()) {
+            QSslSocket::addDefaultCaCertificates(approvedCerts);
+            addApprovedCerts(approvedCerts);
+            emit wantsAccountSaved(this);
+
+            // all ssl certs are known and accepted. We can ignore the problems right away.
+            qCInfo(lcAccount) << out << "Certs are known and trusted! This is not an actual error.";
+        }
 
         // Warning: Do *not* use ignoreSslErrors() (without args) here:
         // it permanently ignores all SSL errors for this host, even
@@ -446,7 +443,7 @@ QString Account::serverVersion() const
 int Account::serverVersionInt() const
 {
     // FIXME: Use Qt 5.5 QVersionNumber
-    auto components = serverVersion().split('.');
+    auto components = serverVersion().split(QLatin1Char('.'));
     return makeServerVersion(components.value(0).toInt(),
         components.value(1).toInt(),
         components.value(2).toInt());
@@ -463,7 +460,8 @@ bool Account::serverVersionUnsupported() const
         // not detected yet, assume it is fine.
         return false;
     }
-    return serverVersionInt() < makeServerVersion(7, 0, 0);
+    // Older version which is not "end of life" according to https://github.com/owncloud/core/wiki/Maintenance-and-Release-Schedule
+    return serverVersionInt() < makeServerVersion(10, 0, 0) || serverVersion().endsWith(QLatin1String("Nextcloud"));
 }
 
 void Account::setServerVersion(const QString &version)
@@ -476,20 +474,5 @@ void Account::setServerVersion(const QString &version)
     _serverVersion = version;
     emit serverVersionChanged(this, oldServerVersion, version);
 }
-
-bool Account::rootEtagChangesNotOnlySubFolderEtags()
-{
-    return (serverVersionInt() >= makeServerVersion(8, 1, 0));
-}
-
-void Account::setNonShib(bool nonShib)
-{
-    if (nonShib) {
-        _davPath = Theme::instance()->webDavPathNonShib();
-    } else {
-        _davPath = Theme::instance()->webDavPath();
-    }
-}
-
 
 } // namespace OCC

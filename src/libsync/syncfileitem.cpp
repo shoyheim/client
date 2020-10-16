@@ -15,6 +15,7 @@
 #include "syncfileitem.h"
 #include "common/syncjournalfilerecord.h"
 #include "common/utility.h"
+#include "filesystem.h"
 
 #include <QLoggingCategory>
 #include "csync/vio/csync_vio_local.h"
@@ -23,12 +24,19 @@ namespace OCC {
 
 Q_LOGGING_CATEGORY(lcFileItem, "sync.fileitem", QtInfoMsg)
 
-SyncJournalFileRecord SyncFileItem::toSyncJournalFileRecordWithInode(const QString &localFileName)
+SyncJournalFileRecord SyncFileItem::toSyncJournalFileRecordWithInode(const QString &localFileName) const
 {
     SyncJournalFileRecord rec;
-    rec._path = _file.toUtf8();
+    rec._path = destination().toUtf8();
     rec._modtime = _modtime;
+
+    // Some types should never be written to the database when propagation completes
     rec._type = _type;
+    if (rec._type == ItemTypeVirtualFileDownload)
+        rec._type = ItemTypeFile;
+    if (rec._type == ItemTypeVirtualFileDehydration)
+        rec._type = ItemTypeVirtualFile;
+
     rec._etag = _etag;
     rec._fileId = _fileId;
     rec._fileSize = _size;
@@ -36,17 +44,15 @@ SyncJournalFileRecord SyncFileItem::toSyncJournalFileRecordWithInode(const QStri
     rec._serverHasIgnoredFiles = _serverHasIgnoredFiles;
     rec._checksumHeader = _checksumHeader;
 
-    // Go through csync vio just to get the inode.
-    csync_file_stat_t fs;
-    if (csync_vio_local_stat(localFileName.toUtf8().constData(), &fs) == 0) {
-        rec._inode = fs.inode;
-        qCDebug(lcFileItem) << localFileName << "Retrieved inode " << _inode << "(previous item inode: " << _inode << ")";
+    // Update the inode if possible
+    rec._inode = _inode;
+    if (FileSystem::getInode(localFileName, &rec._inode)) {
+        qCDebug(lcFileItem) << localFileName << "Retrieved inode " << rec._inode << "(previous item inode: " << _inode << ")";
     } else {
         // use the "old" inode coming with the item for the case where the
         // filesystem stat fails. That can happen if the the file was removed
         // or renamed meanwhile. For the rename case we still need the inode to
         // detect the rename though.
-        rec._inode = _inode;
         qCWarning(lcFileItem) << "Failed to query the 'inode' for file " << localFileName;
     }
     return rec;
@@ -54,8 +60,8 @@ SyncJournalFileRecord SyncFileItem::toSyncJournalFileRecordWithInode(const QStri
 
 SyncFileItemPtr SyncFileItem::fromSyncJournalFileRecord(const SyncJournalFileRecord &rec)
 {
-    SyncFileItemPtr item(new SyncFileItem);
-    item->_file = rec._path;
+    auto item = SyncFileItemPtr::create();
+    item->_file = QString::fromUtf8(rec._path);
     item->_inode = rec._inode;
     item->_modtime = rec._modtime;
     item->_type = rec._type;

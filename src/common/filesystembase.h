@@ -91,7 +91,7 @@ namespace FileSystem {
      */
     bool OCSYNC_EXPORT rename(const QString &originFileName,
         const QString &destinationFileName,
-        QString *errorString = NULL);
+        QString *errorString = nullptr);
 
     /**
      * Rename the file \a originFileName to \a destinationFileName, and
@@ -107,7 +107,7 @@ namespace FileSystem {
      * Equivalent to QFile::remove(), except on Windows, where it will also
      * successfully remove read-only files.
      */
-    bool OCSYNC_EXPORT remove(const QString &fileName, QString *errorString = 0);
+    bool OCSYNC_EXPORT remove(const QString &fileName, QString *errorString = nullptr);
 
     /**
      * Move the specified file or folder to the trash. (Only implemented on linux)
@@ -128,12 +128,6 @@ namespace FileSystem {
      * Returns the file system used at the given path.
      */
     QString fileSystemForPath(const QString &path);
-#endif
-
-    QByteArray OCSYNC_EXPORT calcMd5(const QString &fileName);
-    QByteArray OCSYNC_EXPORT calcSha1(const QString &fileName);
-#ifdef ZLIB_FOUND
-    QByteArray OCSYNC_EXPORT calcAdler32(const QString &fileName);
 #endif
 
     /**
@@ -162,35 +156,7 @@ namespace FileSystem {
      *  - A conversion is only done if the path len is larger than 245. Otherwise
      *    the windows API functions work with the normal "unixoid" representation too.
      */
-    template<typename S>
-    S pathtoUNC(const S &str)
-    {
-        int len = 0;
-        S longStr;
-
-        len = str.length();
-        longStr.reserve(len+4);
-
-        // prepend \\?\ and convert '/' => '\' to support long names
-        if( str[0] == '/' || str[0] == '\\' ) {
-            // Don't prepend if already UNC
-            if( !(len > 1 && (str[1] == '/' || str[1] == '\\')) ) {
-                longStr.append("\\\\?");
-            }
-        } else {
-            longStr.append("\\\\?\\"); // prepend string by this four magic chars.
-        }
-        longStr += str;
-
-        /* replace all occurences of / with the windows native \ */
-        
-        for (auto it = longStr.begin(); it != longStr.end(); ++it) {
-            if(*it == '/') {
-                *it = '\\';
-            }
-        }
-        return longStr;
-    }
+    QString OCSYNC_EXPORT pathtoUNC(const QString &str);
 }
 
 /** @} */

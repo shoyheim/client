@@ -23,17 +23,22 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkProxy>
 #include <qdebug.h>
 
 #include "account.h"
-#include "clientproxy.h"
 #include "configfile.h" // ONLY ACCESS THE STATIC FUNCTIONS!
-#include "creds/httpcredentials.h"
+#ifdef TOKEN_AUTH_ONLY
+# include "creds/tokencredentials.h"
+#else
+# include "creds/httpcredentials.h"
+#endif
 #include "simplesslerrorhandler.h"
 #include "syncengine.h"
 #include "common/syncjournaldb.h"
 #include "config.h"
-#include "connectionvalidator.h"
+#include "csync_exclude.h"
+
 
 #include "cmd.h"
 
@@ -52,10 +57,7 @@
 
 using namespace OCC;
 
-
-static void nullMessageHandler(QtMsgType, const QMessageLogContext &, const QString &)
-{
-}
+namespace {
 
 struct CmdOptions
 {
@@ -70,20 +72,134 @@ struct CmdOptions
     bool useNetrc;
     bool interactive;
     bool ignoreHiddenFiles;
-    bool nonShib;
     QString exclude;
     QString unsyncedfolders;
     QString davPath;
     int restartTimes;
     int downlimit;
     int uplimit;
+    bool deltasync;
+    qint64 deltasyncminfilesize;
 };
 
-// we can't use csync_set_userdata because the SyncEngine sets it already.
-// So we have to use a global variable
-CmdOptions *opts = 0;
+struct SyncCTX
+{
+    const CmdOptions &options;
+    const QUrl url;
+    const QString folder;
+    const AccountPtr account;
+    const QString user;
+};
 
-const qint64 timeoutToUseMsec = qMax(1000, ConnectionValidator::DefaultCallingIntervalMsec - 5 * 1000);
+
+/* If the selective sync list is different from before, we need to disable the read from db
+  (The normal client does it in SelectiveSyncDialog::accept*)
+ */
+void selectiveSyncFixup(OCC::SyncJournalDb *journal, const QStringList &newList)
+{
+    SqlDatabase db;
+    if (!db.openOrCreateReadWrite(journal->databaseFilePath())) {
+        return;
+    }
+
+    bool ok;
+
+    auto oldBlackListSet = journal->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, &ok).toSet();
+    if (ok) {
+        auto blackListSet = newList.toSet();
+        auto changes = (oldBlackListSet - blackListSet) + (blackListSet - oldBlackListSet);
+        foreach (const auto &it, changes) {
+            journal->schedulePathForRemoteDiscovery(it);
+        }
+
+        journal->setSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, newList);
+    }
+}
+
+
+int sync(const SyncCTX &ctx, int restartCount)
+{
+    QStringList selectiveSyncList;
+    if (!ctx.options.unsyncedfolders.isEmpty()) {
+        QFile f(ctx.options.unsyncedfolders);
+        if (!f.open(QFile::ReadOnly)) {
+            qCritical() << "Could not open file containing the list of unsynced folders: " << ctx.options.unsyncedfolders;
+        } else {
+            // filter out empty lines and comments
+            selectiveSyncList = QString::fromUtf8(f.readAll()).split('\n').filter(QRegExp("\\S+")).filter(QRegExp("^[^#]"));
+
+            for (int i = 0; i < selectiveSyncList.count(); ++i) {
+                if (!selectiveSyncList.at(i).endsWith(QLatin1Char('/'))) {
+                    selectiveSyncList[i].append(QLatin1Char('/'));
+                }
+            }
+        }
+    }
+
+    Cmd cmd;
+    QString dbPath = ctx.options.source_dir + SyncJournalDb::makeDbName(ctx.options.source_dir, ctx.url, ctx.folder, ctx.user);
+    SyncJournalDb db(dbPath);
+
+    if (!selectiveSyncList.empty()) {
+        selectiveSyncFixup(&db, selectiveSyncList);
+    }
+
+    SyncOptions opt;
+    opt.fillFromEnvironmentVariables();
+    opt.verifyChunkSizes();
+    SyncEngine engine(ctx.account, ctx.options.source_dir, ctx.folder, &db);
+    engine.setSyncOptions(opt);
+    engine.setIgnoreHiddenFiles(ctx.options.ignoreHiddenFiles);
+    engine.setNetworkLimits(ctx.options.uplimit, ctx.options.downlimit);
+    QObject::connect(&engine, &SyncEngine::finished,
+        [](bool result) { qApp->exit(result ? EXIT_SUCCESS : EXIT_FAILURE); });
+    QObject::connect(&engine, &SyncEngine::transmissionProgress, &cmd, &Cmd::transmissionProgressSlot);
+    QObject::connect(&engine, &SyncEngine::syncError,
+        [](const QString &error) { qWarning() << "Sync error:" << error; });
+
+
+    // Exclude lists
+
+    bool hasUserExcludeFile = !ctx.options.exclude.isEmpty();
+    QString systemExcludeFile = ConfigFile::excludeFileFromSystem();
+
+    // Always try to load the user-provided exclude list if one is specified
+    if (hasUserExcludeFile) {
+        engine.excludedFiles().addExcludeFilePath(ctx.options.exclude);
+    }
+    // Load the system list if available, or if there's no user-provided list
+    if (!hasUserExcludeFile || QFile::exists(systemExcludeFile)) {
+        engine.excludedFiles().addExcludeFilePath(systemExcludeFile);
+    }
+
+    if (!engine.excludedFiles().reloadExcludeFiles()) {
+        qFatal("Cannot load system exclude list or list supplied via --exclude");
+        return EXIT_FAILURE;
+    }
+
+
+    // Have to be done async, else, an error before exec() does not terminate the event loop.
+    QMetaObject::invokeMethod(&engine, "startSync", Qt::QueuedConnection);
+
+    const int resultCode = qApp->exec();
+    if (engine.isAnotherSyncNeeded() != NoFollowUpSync) {
+        if (restartCount < ctx.options.restartTimes) {
+            restartCount++;
+            qDebug() << "Restarting Sync, because another sync is needed" << restartCount;
+            return sync(ctx, restartCount);
+        }
+        qWarning() << "Another sync is needed, but not done because restart count is exceeded" << restartCount;
+    }
+    return resultCode;
+}
+
+}
+
+
+static void nullMessageHandler(QtMsgType, const QMessageLogContext &, const QString &)
+{
+}
+
 
 class EchoDisabler
 {
@@ -129,17 +245,18 @@ QString queryPassword(const QString &user)
     return QString::fromStdString(s);
 }
 
+#ifndef TOKEN_AUTH_ONLY
 class HttpCredentialsText : public HttpCredentials
 {
 public:
     HttpCredentialsText(const QString &user, const QString &password)
-        : HttpCredentials(user, password)
+        : HttpCredentials(DetermineAuthTypeJob::AuthType::Basic ,user, password)
         , // FIXME: not working with client certs yet (qknight)
         _sslTrusted(false)
     {
     }
 
-    void askFromUser() Q_DECL_OVERRIDE
+    void askFromUser() override
     {
         _password = ::queryPassword(user());
         _ready = true;
@@ -152,7 +269,7 @@ public:
         _sslTrusted = isTrusted;
     }
 
-    bool sslIsTrusted() Q_DECL_OVERRIDE
+    bool sslIsTrusted() override
     {
         return _sslTrusted;
     }
@@ -160,6 +277,7 @@ public:
 private:
     bool _sslTrusted;
 };
+#endif /* TOKEN_AUTH_ONLY */
 
 void help()
 {
@@ -183,8 +301,7 @@ void help()
     std::cout << "  --password, -p [pass]  Use [pass] as password" << std::endl;
     std::cout << "  -n                     Use netrc (5) for login" << std::endl;
     std::cout << "  --non-interactive      Do not block execution with interaction" << std::endl;
-    std::cout << "  --nonshib              Use Non Shibboleth WebDAV authentication" << std::endl;
-    std::cout << "  --davpath [path]       Custom themed dav path, overrides --nonshib" << std::endl;
+    std::cout << "  --davpath [path]       Custom themed dav path" << std::endl;
     std::cout << "  --max-sync-retries [n] Retries maximum n times (default to 3)" << std::endl;
     std::cout << "  --uplimit [n]          Limit the upload speed of files to n KB/s" << std::endl;
     std::cout << "  --downlimit [n]        Limit the download speed of files to n KB/s" << std::endl;
@@ -258,8 +375,6 @@ void parseOptions(const QStringList &app_args, CmdOptions *options)
             options->exclude = it.next();
         } else if (option == "--unsyncedfolders" && !it.peekNext().startsWith("-")) {
             options->unsyncedfolders = it.next();
-        } else if (option == "--nonshib") {
-            options->nonShib = true;
         } else if (option == "--davpath" && !it.peekNext().startsWith("-")) {
             options->davPath = it.next();
         } else if (option == "--max-sync-retries" && !it.peekNext().startsWith("-")) {
@@ -281,30 +396,6 @@ void parseOptions(const QStringList &app_args, CmdOptions *options)
     }
 }
 
-/* If the selective sync list is different from before, we need to disable the read from db
-  (The normal client does it in SelectiveSyncDialog::accept*)
- */
-void selectiveSyncFixup(OCC::SyncJournalDb *journal, const QStringList &newList)
-{
-    SqlDatabase db;
-    if (!db.openOrCreateReadWrite(journal->databaseFilePath())) {
-        return;
-    }
-
-    bool ok;
-
-    auto oldBlackListSet = journal->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, &ok).toSet();
-    if (ok) {
-        auto blackListSet = newList.toSet();
-        auto changes = (oldBlackListSet - blackListSet) + (blackListSet - oldBlackListSet);
-        foreach (const auto &it, changes) {
-            journal->avoidReadFromDbOnNextSync(it);
-        }
-
-        journal->setSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, newList);
-    }
-}
-
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -323,11 +414,9 @@ int main(int argc, char **argv)
     options.useNetrc = false;
     options.interactive = true;
     options.ignoreHiddenFiles = true;
-    options.nonShib = false;
     options.restartTimes = 3;
     options.uplimit = 0;
     options.downlimit = 0;
-    ClientProxy clientProxy;
 
     parseOptions(app.arguments(), &options);
 
@@ -346,10 +435,6 @@ int main(int argc, char **argv)
     // check if the webDAV path was added to the url and append if not.
     if (!options.target_url.endsWith("/")) {
         options.target_url.append("/");
-    }
-
-    if (options.nonShib) {
-        account->setNonShib(true);
     }
 
     if (!options.davPath.isEmpty()) {
@@ -439,121 +524,52 @@ int main(int argc, char **argv)
         } else {
             qFatal("Could not read httpproxy. The proxy should have the format \"http://hostname:port\".");
         }
-    } else {
-        clientProxy.setupQtProxyFromConfig();
     }
 
     SimpleSslErrorHandler *sslErrorHandler = new SimpleSslErrorHandler;
 
+#ifdef TOKEN_AUTH_ONLY
+    TokenCredentials *cred = new TokenCredentials(user, password, "");
+    account->setCredentials(cred);
+#else
     HttpCredentialsText *cred = new HttpCredentialsText(user, password);
-
+    account->setCredentials(cred);
     if (options.trustSSL) {
         cred->setSSLTrusted(true);
     }
+#endif
+
     account->setUrl(url);
-    account->setCredentials(cred);
     account->setSslErrorHandler(sslErrorHandler);
 
     // Perform a call to get the capabilities.
-    if (!options.nonShib) {
-        // Do not do it if '--nonshib' was passed. This mean we should only connect to the 'nonshib'
-        // dav endpoint. Since we do not get the capabilities, in that case, this has the additional
-        // side effect that chunking-ng will be disabled. (because otherwise it would use the new
-        // 'dav' endpoint instead of the nonshib one (which still use the old chunking)
+    QEventLoop loop;
+    JsonApiJob *job = new JsonApiJob(account, QLatin1String("ocs/v1.php/cloud/capabilities"));
+    QObject::connect(job, &JsonApiJob::jsonReceived, [&](const QJsonDocument &json) {
+        auto caps = json.object().value("ocs").toObject().value("data").toObject().value("capabilities").toObject();
+        qDebug() << "Server capabilities" << caps;
+        account->setCapabilities(caps.toVariantMap());
+        account->setServerVersion(caps["core"].toObject()["status"].toObject()["version"].toString());
+        loop.quit();
+    });
+    job->start();
+    loop.exec();
 
-        QEventLoop loop;
-        JsonApiJob *job = new JsonApiJob(account, QLatin1String("ocs/v1.php/cloud/capabilities"));
-        job->setTimeout(timeoutToUseMsec);
-        QObject::connect(job, &JsonApiJob::jsonReceived, [&](const QJsonDocument &json) {
-            auto caps = json.object().value("ocs").toObject().value("data").toObject().value("capabilities").toObject();
-            qDebug() << "Server capabilities" << caps;
-            account->setCapabilities(caps.toVariantMap());
-            loop.quit();
-        });
-        job->start();
-
-        loop.exec();
-
-        if (job->reply()->error() != QNetworkReply::NoError){
-            std::cout<<"Error connecting to server\n";
-            return EXIT_FAILURE;
-        }
-    }
-
-    // much lower age than the default since this utility is usually made to be run right after a change in the tests
-    SyncEngine::minimumFileAgeForUpload = 0;
-
-    int restartCount = 0;
-restart_sync:
-
-    opts = &options;
-
-    QStringList selectiveSyncList;
-    if (!options.unsyncedfolders.isEmpty()) {
-        QFile f(options.unsyncedfolders);
-        if (!f.open(QFile::ReadOnly)) {
-            qCritical() << "Could not open file containing the list of unsynced folders: " << options.unsyncedfolders;
-        } else {
-            // filter out empty lines and comments
-            selectiveSyncList = QString::fromUtf8(f.readAll()).split('\n').filter(QRegExp("\\S+")).filter(QRegExp("^[^#]"));
-
-            for (int i = 0; i < selectiveSyncList.count(); ++i) {
-                if (!selectiveSyncList.at(i).endsWith(QLatin1Char('/'))) {
-                    selectiveSyncList[i].append(QLatin1Char('/'));
-                }
-            }
-        }
-    }
-
-    Cmd cmd;
-    QString dbPath = options.source_dir + SyncJournalDb::makeDbName(options.source_dir, credentialFreeUrl, folder, user);
-    SyncJournalDb db(dbPath);
-
-    if (!selectiveSyncList.empty()) {
-        selectiveSyncFixup(&db, selectiveSyncList);
-    }
-
-    SyncEngine engine(account, options.source_dir, folder, &db);
-    engine.setIgnoreHiddenFiles(options.ignoreHiddenFiles);
-    engine.setNetworkLimits(options.uplimit, options.downlimit);
-    QObject::connect(&engine, &SyncEngine::finished,
-        [&app](bool result) { app.exit(result ? EXIT_SUCCESS : EXIT_FAILURE); });
-    QObject::connect(&engine, &SyncEngine::transmissionProgress, &cmd, &Cmd::transmissionProgressSlot);
-
-
-    // Exclude lists
-
-    bool hasUserExcludeFile = !options.exclude.isEmpty();
-    QString systemExcludeFile = ConfigFile::excludeFileFromSystem();
-
-    // Always try to load the user-provided exclude list if one is specified
-    if (hasUserExcludeFile) {
-        engine.excludedFiles().addExcludeFilePath(options.exclude);
-    }
-    // Load the system list if available, or if there's no user-provided list
-    if (!hasUserExcludeFile || QFile::exists(systemExcludeFile)) {
-        engine.excludedFiles().addExcludeFilePath(systemExcludeFile);
-    }
-
-    if (!engine.excludedFiles().reloadExcludeFiles()) {
-        qFatal("Cannot load system exclude list or list supplied via --exclude");
+    if (job->reply()->error() != QNetworkReply::NoError) {
+        std::cout << "Error connecting to server\n";
         return EXIT_FAILURE;
     }
 
-
-    // Have to be done async, else, an error before exec() does not terminate the event loop.
-    QMetaObject::invokeMethod(&engine, "startSync", Qt::QueuedConnection);
-
-    int resultCode = app.exec();
-
-    if (engine.isAnotherSyncNeeded() != NoFollowUpSync) {
-        if (restartCount < options.restartTimes) {
-            restartCount++;
-            qDebug() << "Restarting Sync, because another sync is needed" << restartCount;
-            goto restart_sync;
-        }
-        qWarning() << "Another sync is needed, but not done because restart count is exceeded" << restartCount;
-    }
-
-    return resultCode;
+    job = new JsonApiJob(account, QLatin1String("ocs/v1.php/cloud/user"));
+    QObject::connect(job, &JsonApiJob::jsonReceived, [&](const QJsonDocument &json) {
+        const QJsonObject data = json.object().value("ocs").toObject().value("data").toObject();
+        account->setDavUser(data.value("id").toString());
+        account->setDavDisplayName(data.value("display-name").toString());
+        loop.quit();
+    });
+    job->start();
+    loop.exec();
+    // much lower age than the default since this utility is usually made to be run right after a change in the tests
+    SyncEngine::minimumFileAgeForUpload = std::chrono::milliseconds(0);
+    return sync({ options, credentialFreeUrl, folder, account, user }, 0);
 }

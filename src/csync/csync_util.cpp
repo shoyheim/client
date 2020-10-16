@@ -32,33 +32,10 @@
 
 #include "common/c_jhash.h"
 #include "csync_util.h"
-#include "vio/csync_vio.h"
+
+#include <QtCore/QLoggingCategory>
 
 Q_LOGGING_CATEGORY(lcCSyncUtils, "sync.csync.utils", QtInfoMsg)
-
-
-typedef struct {
-  const char *instr_str;
-  enum csync_instructions_e instr_code;
-} _instr_code_struct;
-
-static const _instr_code_struct _instr[] =
-{
-  { "INSTRUCTION_NONE", CSYNC_INSTRUCTION_NONE },
-  { "INSTRUCTION_EVAL", CSYNC_INSTRUCTION_EVAL },
-  { "INSTRUCTION_REMOVE", CSYNC_INSTRUCTION_REMOVE },
-  { "INSTRUCTION_RENAME", CSYNC_INSTRUCTION_RENAME },
-  { "INSTRUCTION_EVAL_RENAME", CSYNC_INSTRUCTION_EVAL_RENAME },
-  { "INSTRUCTION_NEW", CSYNC_INSTRUCTION_NEW },
-  { "INSTRUCTION_CONFLICT", CSYNC_INSTRUCTION_CONFLICT },
-  { "INSTRUCTION_IGNORE", CSYNC_INSTRUCTION_IGNORE },
-  { "INSTRUCTION_SYNC", CSYNC_INSTRUCTION_SYNC },
-  { "INSTRUCTION_STAT_ERR", CSYNC_INSTRUCTION_STAT_ERROR },
-  { "INSTRUCTION_ERROR", CSYNC_INSTRUCTION_ERROR },
-  { "INSTRUCTION_TYPE_CHANGE", CSYNC_INSTRUCTION_TYPE_CHANGE },
-  { "INSTRUCTION_UPDATE_METADATA", CSYNC_INSTRUCTION_UPDATE_METADATA },
-  { NULL, CSYNC_INSTRUCTION_ERROR }
-};
 
 struct csync_memstat_s {
   int size;
@@ -70,21 +47,6 @@ struct csync_memstat_s {
   int dt;
 };
 
-const char *csync_instruction_str(enum csync_instructions_e instr)
-{
-  int idx = 0;
-
-  while (_instr[idx].instr_str != NULL) {
-    if (_instr[idx].instr_code == instr) {
-      return _instr[idx].instr_str;
-    }
-    idx++;
-  }
-
-  return "ERROR!";
-}
-
-
 void csync_memstat_check(void) {
   int s = 0;
   struct csync_memstat_s m;
@@ -92,7 +54,7 @@ void csync_memstat_check(void) {
 
   /* get process memory stats */
   fp = fopen("/proc/self/statm","r");
-  if (fp == NULL) {
+  if (fp == nullptr) {
     return;
   }
   s = fscanf(fp, "%d%d%d%d%d%d%d", &m.size, &m.resident, &m.shared, &m.trs,
@@ -194,6 +156,6 @@ time_t oc_httpdate_parse( const char *date ) {
 
 bool csync_is_collision_safe_hash(const QByteArray &checksum_header)
 {
-    return checksum_header.startsWith("SHA1:")
+    return checksum_header.startsWith("SHA")
         || checksum_header.startsWith("MD5:");
 }

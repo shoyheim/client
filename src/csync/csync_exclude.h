@@ -43,7 +43,8 @@ enum csync_exclude_type_e {
   CSYNC_FILE_EXCLUDE_HIDDEN,
   CSYNC_FILE_EXCLUDE_STAT_FAILED,
   CSYNC_FILE_EXCLUDE_CONFLICT,
-  CSYNC_FILE_EXCLUDE_CANNOT_ENCODE
+  CSYNC_FILE_EXCLUDE_CANNOT_ENCODE,
+  CSYNC_FILE_EXCLUDE_SERVER_BLACKLISTED,
 };
 typedef enum csync_exclude_type_e CSYNC_EXCLUDE_TYPE;
 
@@ -66,8 +67,10 @@ class OCSYNC_EXPORT ExcludedFiles : public QObject
 {
     Q_OBJECT
 public:
+    typedef std::tuple<int, int, int> Version;
+
     ExcludedFiles();
-    ~ExcludedFiles();
+    ~ExcludedFiles() override;
 
     /**
      * Adds a new path to a file containing exclude patterns.
@@ -100,7 +103,7 @@ public:
      * Primarily used in tests. Patterns added this way are preserved when
      * reloadExcludeFiles() is called.
      */
-    void addManualExclude(const QByteArray &expr);
+    void addManualExclude(const QString &expr);
 
     /**
      * Removes all manually added exclude patterns.
@@ -115,31 +118,9 @@ public:
     void setWildcardsMatchSlash(bool onoff);
 
     /**
-     * Generate a hook for traversal exclude pattern matching
-     * that csync can use.
-     *
-     * Careful: The function will only be valid for as long as this
-     * ExcludedFiles instance stays alive.
+     * Sets the client version, only used for testing.
      */
-    auto csyncTraversalMatchFun() const
-        -> std::function<CSYNC_EXCLUDE_TYPE(const char *path, ItemType filetype)>;
-
-public slots:
-    /**
-     * Reloads the exclude patterns from the registered paths.
-     */
-    bool reloadExcludeFiles();
-
-private:
-    /**
-     * @brief Match the exclude pattern against the full path.
-     *
-     * @param Path is folder-relative, should not start with a /.
-     *
-     * Note that this only matches patterns. It does not check whether the file
-     * or directory pointed to is hidden (or whether it even exists).
-     */
-    CSYNC_EXCLUDE_TYPE fullPatternMatch(const char *path, ItemType filetype) const;
+    void setClientVersion(Version version);
 
     /**
      * @brief Check if the given path should be excluded in a traversal situation.
@@ -156,7 +137,41 @@ private:
      * Note that this only matches patterns. It does not check whether the file
      * or directory pointed to is hidden (or whether it even exists).
      */
-    CSYNC_EXCLUDE_TYPE traversalPatternMatch(const char *path, ItemType filetype) const;
+    CSYNC_EXCLUDE_TYPE traversalPatternMatch(const QString &path, ItemType filetype) const;
+
+public slots:
+    /**
+     * Reloads the exclude patterns from the registered paths.
+     */
+    bool reloadExcludeFiles();
+
+private:
+    /**
+     * Returns true if the version directive indicates the next line
+     * should be skipped.
+     *
+     * A version directive has the form "#!version <op> <version>"
+     * where <op> can be <, <=, ==, >, >= and <version> can be any version
+     * like 2.5.0.
+     *
+     * Example:
+     *
+     * #!version < 2.5.0
+     * myexclude
+     *
+     * Would enable the "myexclude" pattern only for versions before 2.5.0.
+     */
+    bool versionDirectiveKeepNextLine(const QByteArray &directive) const;
+
+    /**
+     * @brief Match the exclude pattern against the full path.
+     *
+     * @param Path is folder-relative, should not start with a /.
+     *
+     * Note that this only matches patterns. It does not check whether the file
+     * or directory pointed to is hidden (or whether it even exists).
+     */
+    CSYNC_EXCLUDE_TYPE fullPatternMatch(const QString &path, ItemType filetype) const;
 
     /**
      * Generate optimized regular expressions for the exclude patterns.
@@ -189,14 +204,17 @@ private:
      */
     void prepare();
 
+    static QString extractBnameTrigger(const QString &exclude, bool wildcardsMatchSlash);
+    static QString convertToRegexpSyntax(QString exclude, bool wildcardsMatchSlash);
+
     /// Files to load excludes from
     QSet<QString> _excludeFiles;
 
     /// Exclude patterns added with addManualExclude()
-    QList<QByteArray> _manualExcludes;
+    QStringList _manualExcludes;
 
     /// List of all active exclude patterns
-    QList<QByteArray> _allExcludes;
+    QStringList _allExcludes;
 
     /// see prepare()
     QRegularExpression _bnameTraversalRegexFile;
@@ -216,7 +234,13 @@ private:
      */
     bool _wildcardsMatchSlash = false;
 
-    friend class ExcludedFilesTest;
+    /**
+     * The client version. Used to evaluate version-dependent excludes,
+     * see versionDirectiveKeepNextLine().
+     */
+    Version _clientVersion;
+
+    friend class TestExcludedFiles;
 };
 
 #endif /* _CSYNC_EXCLUDE_H */

@@ -84,6 +84,18 @@ ActivityWidget::ActivityWidget(QWidget *parent)
     connect(_model, &ActivityListModel::activityJobStatusCode,
         this, &ActivityWidget::slotAccountActivityStatus);
 
+    connect(AccountManager::instance(), &AccountManager::accountRemoved, this, [this](AccountState *ast) {
+        if (_accountsWithoutActivities.remove(ast->account()->displayName())) {
+            showLabels();
+        }
+
+        for (auto it = _widgetForNotifId.cbegin(); it != _widgetForNotifId.cend(); ++it) {
+            if (it.key().second == ast->account()->displayName()) {
+                scheduleWidgetToRemove(it.value());
+            }
+        }
+    });
+
     _copyBtn = _ui->_dialogButtonBox->addButton(tr("Copy"), QDialogButtonBox::ActionRole);
     _copyBtn->setToolTip(tr("Copy the activity list to the clipboard."));
     connect(_copyBtn, &QAbstractButton::clicked, this, &ActivityWidget::copyToClipboard);
@@ -132,7 +144,7 @@ void ActivityWidget::showLabels()
     _ui->_headerLabel->setTextFormat(Qt::RichText);
     _ui->_headerLabel->setText(t);
 
-    _ui->_notifyLabel->setText(tr("Action Required: Notifications"));
+    _ui->_notifyLabel->setText(tr("Notifications"));
 
     t.clear();
     QSetIterator<QString> i(_accountsWithoutActivities);
@@ -253,7 +265,7 @@ void ActivityWidget::slotBuildNotificationDisplay(const ActivityList &list)
             continue;
         }
 
-        NotificationWidget *widget = 0;
+        NotificationWidget *widget = nullptr;
 
         if (_widgetForNotifId.contains(activity.ident())) {
             widget = _widgetForNotifId[activity.ident()];
@@ -265,7 +277,7 @@ void ActivityWidget::slotBuildNotificationDisplay(const ActivityList &list)
                 this, &ActivityWidget::slotRequestCleanupAndBlacklist);
 
             _notificationsLayout->addWidget(widget);
-// _ui->_notifyScroll->setMinimumHeight( widget->height());
+            // _ui->_notifyScroll->setMinimumHeight( widget->height());
             _ui->_notifyScroll->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContentsOnFirstShow);
             _widgetForNotifId[activity.ident()] = widget;
             newNotificationShown = true;
@@ -290,11 +302,6 @@ void ActivityWidget::slotBuildNotificationDisplay(const ActivityList &list)
             QString host = activity._accName;
             // store the name of the account that sends the notification to be
             // able to add it to the tray notification
-            // remove the user name from the account as that is not accurate here.
-            int indx = host.indexOf(QChar('@'));
-            if (indx > -1) {
-                host.remove(0, 1 + indx);
-            }
             if (!host.isEmpty()) {
                 if (accNotified.contains(host)) {
                     accNotified[host] = accNotified[host] + 1;
@@ -339,28 +346,28 @@ void ActivityWidget::slotBuildNotificationDisplay(const ActivityList &list)
 
     checkActivityTabVisibility();
 
-    int newGuiLogCount = accNotified.count();
+    const int newGuiLogCount = accNotified.count();
 
     if (newGuiLogCount > 0) {
         // restart the gui log timer now that we show a notification
         _guiLogTimer.start();
 
         // Assemble a tray notification
-        QString msg = tr("You received %n new notification(s) from %2.", "", accNotified[accNotified.keys().at(0)]).arg(accNotified.keys().at(0));
-
-        if (newGuiLogCount >= 2) {
-            QString acc1 = accNotified.keys().at(0);
-            QString acc2 = accNotified.keys().at(1);
+        QString msg;
+        if (newGuiLogCount == 1) {
+            msg = tr("%n notifications(s) for %1.", "", accNotified.begin().value()).arg(accNotified.begin().key());
+        } else if (newGuiLogCount >= 2) {
+            const auto acc1 = accNotified.begin();
+            const auto acc2 = acc1 + 1;
             if (newGuiLogCount == 2) {
-                int notiCount = accNotified[acc1] + accNotified[acc2];
-                msg = tr("You received %n new notification(s) from %1 and %2.", "", notiCount).arg(acc1, acc2);
+                const int notiCount = acc1.value() + acc2.value();
+                msg = tr("%n notifications(s) for %1 and %2.", "", notiCount).arg(acc1.key(), acc2.key());
             } else {
-                msg = tr("You received new notifications from %1, %2 and other accounts.").arg(acc1, acc2);
+                msg = tr("New notifications for %1, %2 and other accounts.").arg(acc1.key(), acc2.key());
             }
         }
-
-        const QString log = tr("%1 Notifications - Action Required").arg(Theme::instance()->appNameGUI());
-        emit guiLog(log, msg);
+        const QString log = tr("Open the activity view for details.");
+        emit guiLog(msg, log);
     }
 
     if (newNotificationShown) {
@@ -657,10 +664,7 @@ void ActivitySettings::slotRegularNotificationCheck()
 bool ActivitySettings::event(QEvent *e)
 {
     if (e->type() == QEvent::Show) {
-        AccountManager *am = AccountManager::instance();
-        foreach (AccountStatePtr a, am->accounts()) {
-            slotRefresh(a.data());
-        }
+        slotRegularNotificationCheck();
     }
     return QWidget::event(e);
 }

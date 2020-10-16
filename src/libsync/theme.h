@@ -43,11 +43,19 @@ public:
         oCSetupBottom,
         oCSetupResultTop // ownCloud connect result page
     };
+    Q_ENUM(CustomMediaType);
+
+    enum class VersionFormat {
+        Plain,
+        Url,
+        RichText
+    };
+    Q_ENUM(VersionFormat);
 
     /* returns a singleton instance. */
     static Theme *instance();
 
-    ~Theme();
+    ~Theme() override;
 
     /**
      * @brief appNameGUI - Human readable application name.
@@ -84,16 +92,9 @@ public:
      * @brief configFileName
      * @return the name of the config file.
      */
-    virtual QString configFileName() const = 0;
+    virtual QString configFileName() const;
 
 #ifndef TOKEN_AUTH_ONLY
-    static QString hidpiFileName(const QString &fileName, QPaintDevice *dev = 0);
-
-    /**
-      * the icon that is shown in the tray context menu left of the folder name
-      */
-    virtual QIcon trayFolderIcon(const QString &) const;
-
     /**
       * get an sync state icon
       */
@@ -101,7 +102,7 @@ public:
 
     virtual QIcon folderDisabledIcon() const;
     virtual QIcon folderOfflineIcon(bool sysTray = false, bool sysTrayMenuVisible = false) const;
-    virtual QIcon applicationIcon() const = 0;
+    virtual QIcon applicationIcon() const;
 #endif
 
     virtual QString statusHeaderText(SyncResult::Status) const;
@@ -118,9 +119,27 @@ public:
     virtual bool multiAccount() const;
 
     /**
-    * URL to help file
+    * URL to documentation.
+    *
+    * This is opened in the browser when the "Help" action is selected from the tray menu.
+    *
+    * If the function is overridden to return an empty string the action is removed from
+    * the menu.
+    *
+    * Defaults to ownCloud's client documentation website.
     */
-    virtual QString helpUrl() const { return QString(); }
+    virtual QString helpUrl() const;
+
+    /**
+     * The url to use for showing help on conflicts.
+     *
+     * If the function is overridden to return an empty string no help link will be shown.
+     *
+     * Defaults to helpUrl() + "conflicts.html", which is a page in ownCloud's client
+     * documentation website. If helpUrl() is empty, this function will also return the
+     * empty string.
+     */
+    virtual QString conflictHelpUrl() const;
 
     /**
      * Setting a value here will pre-define the server url.
@@ -169,7 +188,7 @@ public:
     virtual QColor wizardHeaderBackgroundColor() const;
 
     /** @return logo for the setup wizard. */
-    virtual QPixmap wizardHeaderLogo() const;
+    virtual QIcon wizardHeaderLogo() const;
 
     /**
      * The default implementation creates a
@@ -178,18 +197,24 @@ public:
      *
      * @return banner for the setup wizard.
      */
-    virtual QPixmap wizardHeaderBanner() const;
+    virtual QPixmap wizardHeaderBanner(const QSize &size) const;
 #endif
 
     /**
      * The SHA sum of the released git commit
      */
-    QString gitSHA1() const;
+    QString gitSHA1(VersionFormat format = VersionFormat::Plain) const;
+
+    /**
+     * The used library versions
+     */
+    QString aboutVersions(VersionFormat format = VersionFormat::Plain) const;
 
     /**
      * About dialog contents
      */
     virtual QString about() const;
+    virtual bool aboutShowCopyright() const;
 
     /**
      * Define if the systray icons should be using mono design
@@ -210,12 +235,6 @@ public:
      * @brief Where to check for new Updates.
      */
     virtual QString updateCheckUrl() const;
-
-    /**
-     * When true, the setup wizard will show the selective sync dialog by default and default
-     * to nothing selected
-     */
-    virtual bool wizardSelectiveSyncDefaultNothing() const;
 
     /**
      * Default option for the newBigFolderSizeLimit.
@@ -242,7 +261,6 @@ public:
      * it has a trailing slash, for example "remote.php/webdav/".
      */
     virtual QString webDavPath() const;
-    virtual QString webDavPathNonShib() const;
 
     /**
      * @brief Sharing options
@@ -328,6 +346,19 @@ public:
     virtual QString oauthClientSecret() const;
 
     /**
+     * By default the client tries to get the OAuth access endpoint and the OAuth token endpoint from /.well-known/openid-configuration
+     * Setting this allow authentication without a well known url
+     *
+     * @return QPair<OAuth access endpoint, OAuth token endpoint>
+     */
+    virtual QPair<QString, QString> oauthOverrideAuthUrl() const;
+
+    /**
+     * Returns the required opeidconnect scopes
+     */
+    virtual QString openIdConnectScopes() const;
+
+    /**
      * @brief What should be output for the --version command line switch.
      *
      * By default, it's a combination of appName(), version(), the GIT SHA1 and some
@@ -335,6 +366,20 @@ public:
      */
     virtual QString versionSwitchOutput() const;
 
+    /**
+     * @brief Whether to show the option to create folders using "virtual files".
+     *
+     * By default, this is the same as enableExperimentalFreatures()
+     */
+    virtual bool showVirtualFilesOption() const;
+
+    /**
+     * @brief Whether to show options considered as experimental.
+     *
+     * By default, the options are not shown unless experimental options are
+     * manually enabled in the configuration file.
+     */
+    virtual bool enableExperimentalFeatures() const;
 
 protected:
 #ifndef TOKEN_AUTH_ONLY

@@ -35,12 +35,14 @@ class OwncloudAdvancedSetupPage : public QWizardPage
 public:
     OwncloudAdvancedSetupPage();
 
-    virtual bool isComplete() const Q_DECL_OVERRIDE;
-    virtual void initializePage() Q_DECL_OVERRIDE;
-    virtual int nextId() const Q_DECL_OVERRIDE;
-    bool validatePage() Q_DECL_OVERRIDE;
+    bool isComplete() const override;
+    void initializePage() override;
+    int nextId() const override;
+    bool validatePage() override;
     QString localFolder() const;
     QStringList selectiveSyncBlacklist() const;
+    bool useVirtualFileSync() const;
+    bool manualFolderConfig() const;
     bool isConfirmBigFolderChecked() const;
     void setRemoteFolder(const QString &remoteFolder);
     void setMultipleFoldersExist(bool exist);
@@ -56,9 +58,12 @@ private slots:
     void slotSelectFolder();
     void slotSyncEverythingClicked();
     void slotSelectiveSyncClicked();
+    void slotVirtualFileSyncClicked();
     void slotQuotaRetrieved(const QVariantMap &result);
 
 private:
+    void setRadioChecked(QRadioButton *radio);
+
     void setupCustomization();
     void updateStatus();
     bool dataChanged();

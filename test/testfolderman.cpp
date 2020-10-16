@@ -21,10 +21,10 @@ using namespace OCC;
 class HttpCredentialsTest : public HttpCredentials {
 public:
     HttpCredentialsTest(const QString& user, const QString& password)
-        : HttpCredentials(user, password)
+        : HttpCredentials(DetermineAuthTypeJob::AuthType::Basic, user, password)
     {}
 
-    void askFromUser() Q_DECL_OVERRIDE {
+    void askFromUser() override {
 
     }
 };
@@ -144,8 +144,27 @@ private slots:
         QVERIFY(!folderman->checkPathValidityForNewFolder("/usr/bin/somefolder").isNull());
 #endif
 
+#ifdef Q_OS_WIN // drive-letter tests
+        if (!QFileInfo("v:/").exists()) {
+            QVERIFY(!folderman->checkPathValidityForNewFolder("v:").isNull());
+            QVERIFY(!folderman->checkPathValidityForNewFolder("v:/").isNull());
+            QVERIFY(!folderman->checkPathValidityForNewFolder("v:/foo").isNull());
+        }
+        if (QFileInfo("c:/").isWritable()) {
+            QVERIFY(folderman->checkPathValidityForNewFolder("c:").isNull());
+            QVERIFY(folderman->checkPathValidityForNewFolder("c:/").isNull());
+            QVERIFY(folderman->checkPathValidityForNewFolder("c:/foo").isNull());
+        }
+#endif
+
         // Invalid paths
         QVERIFY(!folderman->checkPathValidityForNewFolder("").isNull());
+
+
+        // REMOVE ownCloud2 from the filesystem, but keep a folder sync'ed to it.
+        QDir(dirPath + "/ownCloud2/").removeRecursively();
+        QVERIFY(!folderman->checkPathValidityForNewFolder(dirPath + "/ownCloud2/blublu").isNull());
+        QVERIFY(!folderman->checkPathValidityForNewFolder(dirPath + "/ownCloud2/sub/subsub/sub").isNull());
     }
 
     void testFindGoodPathForNewSyncFolder()
@@ -169,6 +188,7 @@ private slots:
         HttpCredentialsTest *cred = new HttpCredentialsTest("testuser", "secret");
         account->setCredentials(cred);
         account->setUrl( url );
+        url.setUserName(cred->user());
 
         AccountStatePtr newAccountState(new AccountState(account));
         FolderMan *folderman = FolderMan::instance();
@@ -190,6 +210,14 @@ private slots:
                  QString(dirPath + "/ownCloud2/bar"));
         QCOMPARE(folderman->findGoodPathForNewSyncFolder(dirPath + "/sub", url),
                  QString(dirPath + "/sub2"));
+
+        // REMOVE ownCloud2 from the filesystem, but keep a folder sync'ed to it.
+        // We should still not suggest this folder as a new folder.
+        QDir(dirPath + "/ownCloud2/").removeRecursively();
+        QCOMPARE(folderman->findGoodPathForNewSyncFolder(dirPath + "/ownCloud", url),
+            QString(dirPath + "/ownCloud3"));
+        QCOMPARE(folderman->findGoodPathForNewSyncFolder(dirPath + "/ownCloud2", url),
+            QString(dirPath + "/ownCloud22"));
     }
 };
 

@@ -16,6 +16,7 @@
 #include "account.h"
 #include "accountstate.h"
 #include "theme.h"
+#include "guiutility.h"
 
 #include <QMenu>
 #include <QUrl>
@@ -37,6 +38,7 @@ SslButton::SslButton(QWidget *parent)
     _menu = new QMenu(this);
     QObject::connect(_menu, &QMenu::aboutToShow,
         this, &SslButton::slotUpdateMenu);
+    setMenu(_menu);
 }
 
 static QString addCertDetailsField(const QString &key, const QString &value)
@@ -58,7 +60,7 @@ static bool isSelfSigned(const QSslCertificate &certificate)
 }
 
 QMenu *SslButton::buildCertMenu(QMenu *parent, const QSslCertificate &cert,
-    const QList<QSslCertificate> &userApproved, int pos)
+    const QList<QSslCertificate> &userApproved, int pos, const QList<QSslCertificate> &systemCaCertificates)
 {
     QString cn = QStringList(cert.subjectInfo(QSslCertificate::CommonName)).join(QChar(';'));
     QString ou = QStringList(cert.subjectInfo(QSslCertificate::OrganizationalUnitName)).join(QChar(';'));
@@ -129,7 +131,7 @@ QMenu *SslButton::buildCertMenu(QMenu *parent, const QSslCertificate &cert,
 
     QString certId = cn.isEmpty() ? ou : cn;
 
-    if (QSslConfiguration::systemCaCertificates().contains(cert)) {
+    if (systemCaCertificates.contains(cert)) {
         txt += certId;
     } else {
         if (isSelfSigned(cert)) {
@@ -141,7 +143,7 @@ QMenu *SslButton::buildCertMenu(QMenu *parent, const QSslCertificate &cert,
 
     // create label first
     QLabel *label = new QLabel(parent);
-    label->setStyleSheet(QLatin1String("QLabel { padding: 8px; background-color: #fff; }"));
+    label->setStyleSheet(QLatin1String("QLabel { padding: 8px; }"));
     label->setTextFormat(Qt::RichText);
     label->setText(details);
 
@@ -168,14 +170,12 @@ void SslButton::updateAccountState(AccountState *accountState)
 
     AccountPtr account = _accountState->account();
     if (account->url().scheme() == QLatin1String("https")) {
-        setIcon(QIcon(QLatin1String(":/client/resources/lock-https.png")));
+        setIcon(QIcon(QStringLiteral(":/client/resources/lock-https.svg")));
         QSslCipher cipher = account->_sessionCipher;
         setToolTip(tr("This connection is encrypted using %1 bit %2.\n").arg(cipher.usedBits()).arg(cipher.name()));
-        setMenu(_menu);
     } else {
-        setIcon(QIcon(QLatin1String(":/client/resources/lock-http.png")));
+        setIcon(QIcon(QStringLiteral(":/client/resources/lock-http.svg")));
         setToolTip(tr("This connection is NOT secure as it is not encrypted.\n"));
-        setMenu(0);
     }
 }
 
@@ -188,6 +188,12 @@ void SslButton::slotUpdateMenu()
     }
 
     AccountPtr account = _accountState->account();
+
+    _menu->addAction(tr("Server version: %1").arg(account->serverVersion()))->setEnabled(false);
+
+    if (account->isHttp2Supported()) {
+        _menu->addAction("HTTP/2")->setEnabled(false);
+    }
 
     if (account->url().scheme() == QLatin1String("https")) {
         QString sslVersion = account->_sessionCipher.protocolString()
@@ -232,9 +238,11 @@ void SslButton::slotUpdateMenu()
         it.toBack();
         int i = 0;
         while (it.hasPrevious()) {
-            _menu->addMenu(buildCertMenu(_menu, it.previous(), account->approvedCerts(), i));
+            _menu->addMenu(buildCertMenu(_menu, it.previous(), account->approvedCerts(), i, systemCerts));
             i++;
         }
+    } else {
+        _menu->addAction(tr("The connection is not secure"))->setEnabled(false);
     }
 }
 

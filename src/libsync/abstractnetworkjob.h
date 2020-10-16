@@ -24,6 +24,7 @@
 #include <QDateTime>
 #include <QTimer>
 #include "accountfwd.h"
+#include "common/asserts.h"
 
 class QUrl;
 
@@ -39,8 +40,8 @@ class OWNCLOUDSYNC_EXPORT AbstractNetworkJob : public QObject
 {
     Q_OBJECT
 public:
-    explicit AbstractNetworkJob(AccountPtr account, const QString &path, QObject *parent = 0);
-    virtual ~AbstractNetworkJob();
+    explicit AbstractNetworkJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
+    ~AbstractNetworkJob() override;
 
     virtual void start();
 
@@ -69,6 +70,8 @@ public:
     bool followRedirects() const { return _followRedirects; }
 
     QByteArray responseTimestamp();
+    /* Content of the X-Request-ID header. (Only set after the request is sent) */
+    QByteArray requestId();
 
     qint64 timeoutMsec() const { return _timer.interval(); }
     bool timedOut() const { return _timedout; }
@@ -86,11 +89,18 @@ public:
      *
      * Warning: Needs to call reply()->readAll().
      */
-    QString errorStringParsingBody(QByteArray *body = 0);
+    QString errorStringParsingBody(QByteArray *body = nullptr);
+
+    /** Make a new request */
+    void retry();
 
     /** static variable the HTTP timeout (in seconds). If set to 0, the default will be used
      */
     static int httpTimeout;
+
+    /** whether or noth this job should be restarted after authentication */
+    bool  isAuthenticationJob() const;
+    void  setAuthenticationJob(bool b);
 
 public slots:
     void setTimeout(qint64 msec);
@@ -120,14 +130,14 @@ protected:
      */
     QNetworkReply *sendRequest(const QByteArray &verb, const QUrl &url,
         QNetworkRequest req = QNetworkRequest(),
-        QIODevice *requestBody = 0);
+        QIODevice *requestBody = nullptr);
 
     // sendRequest does not take a relative path instead of an url,
     // but the old API allowed that. We have this undefined overload
     // to help catch usage errors
     QNetworkReply *sendRequest(const QByteArray &verb, const QString &relativePath,
         QNetworkRequest req = QNetworkRequest(),
-        QIODevice *requestBody = 0);
+        QIODevice *requestBody = nullptr);
 
     /** Makes this job drive a pre-made QNetworkReply
      *
@@ -173,6 +183,8 @@ protected:
     // GET requests that don't set up any HTTP body or other flags.
     bool _followRedirects;
 
+    QString replyStatusString();
+
 private slots:
     void slotFinished();
     void slotTimeout();
@@ -186,13 +198,16 @@ private:
     QPointer<QNetworkReply> _reply; // (QPointer because the NetworkManager may be destroyed before the jobs at exit)
     QString _path;
     QTimer _timer;
-    int _redirectCount;
+    int _redirectCount = 0;
+    int _http2ResendCount = 0;
 
     // Set by the xyzRequest() functions and needed to be able to redirect
     // requests, should it be required.
     //
     // Reparented to the currently running QNetworkReply.
     QPointer<QIODevice> _requestBody;
+
+    bool _isAuthenticationJob = false;
 };
 
 /**
@@ -220,12 +235,6 @@ QString OWNCLOUDSYNC_EXPORT extractErrorMessage(const QByteArray &errorResponse)
 
 /** Builds a error message based on the error and the reply body. */
 QString OWNCLOUDSYNC_EXPORT errorMessage(const QString &baseError, const QByteArray &body);
-
-/** Helper to construct the HTTP verb used in the request
- *
- * Returns an empty QByteArray for UnknownOperation.
- */
-QByteArray OWNCLOUDSYNC_EXPORT requestVerb(const QNetworkReply &reply);
 
 /** Nicer errorString() for QNetworkReply
  *

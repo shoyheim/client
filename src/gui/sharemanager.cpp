@@ -37,10 +37,8 @@ static void updateFolder(const AccountPtr &account, const QString &path)
         if (path.startsWith(folderPath) && (path == folderPath || folderPath.endsWith('/') || path[folderPath.size()] == '/')) {
             // Workaround the fact that the server does not invalidate the etags of parent directories
             // when something is shared.
-            auto relative = path.midRef(folderPath.size());
-            if (relative.startsWith('/'))
-                relative = relative.mid(1);
-            f->journalDb()->avoidReadFromDbOnNextSync(relative.toString());
+            auto relative = path.midRef(f->remotePathTrailingSlash().length());
+            f->journalDb()->schedulePathForRemoteDiscovery(relative.toString());
 
             // Schedule a sync so it can update the remote permission flag and let the socket API
             // know about the shared icon.
@@ -207,7 +205,7 @@ void LinkShare::setPassword(const QString &password)
 
 void LinkShare::slotPasswordSet(const QJsonDocument &, const QVariant &value)
 {
-    _passwordSet = value.toString() == "";
+    _passwordSet = value.toString() != "";
     emit passwordSet();
 }
 
@@ -254,12 +252,14 @@ ShareManager::ShareManager(AccountPtr account, QObject *parent)
 
 void ShareManager::createLinkShare(const QString &path,
     const QString &name,
-    const QString &password)
+    const QString &password,
+    const QDate &expireDate,
+    const Share::Permissions permissions)
 {
     OcsShareJob *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &ShareManager::slotLinkShareCreated);
     connect(job, &OcsJob::ocsError, this, &ShareManager::slotOcsError);
-    job->createLinkShare(path, name, password);
+    job->createLinkShare(path, name, password, expireDate, permissions);
 }
 
 void ShareManager::slotLinkShareCreated(const QJsonDocument &reply)
@@ -267,12 +267,10 @@ void ShareManager::slotLinkShareCreated(const QJsonDocument &reply)
     QString message;
     int code = OcsShareJob::getJsonReturnCode(reply, message);
 
-    /*
-     * Before we had decent sharing capabilities on the server a 403 "generally"
-     * meant that a share was password protected
-     */
+    // A 403 generally means some of the settings for the share are not allowed.
+    // Maybe a password is required, or the expire date isn't acceptable.
     if (code == 403) {
-        emit linkShareRequiresPassword(message);
+        emit linkShareCreationForbidden(message);
         return;
     }
 
@@ -295,6 +293,13 @@ void ShareManager::createShare(const QString &path,
     connect(job, &OcsJob::ocsError, this, &ShareManager::slotOcsError);
     connect(job, &OcsShareJob::shareJobFinished, this,
         [=](const QJsonDocument &reply) {
+            // Note: The following code attempts to determine if the item was shared with
+            // the user and what the permissions were. It doesn't do a good job at it since
+            // the == path comparison will mean it doesn't work for subitems of shared
+            // folders. Also, it's nicer if the calling code determines the share-permissions
+            // (see maxSharingPermissions) via a PropFind and passes in valid permissions.
+            // Remove this code for >= 2.7.0.
+
             // Find existing share permissions (if this was shared with us)
             Share::Permissions existingPermissions = SharePermissionDefault;
             foreach (const QJsonValue &element, reply.object()["ocs"].toObject()["data"].toArray()) {

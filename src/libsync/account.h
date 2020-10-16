@@ -71,9 +71,14 @@ public:
 class OWNCLOUDSYNC_EXPORT Account : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString id MEMBER _id)
+    Q_PROPERTY(QString davUser MEMBER _davUser)
+    Q_PROPERTY(QString displayName MEMBER _displayName)
+    Q_PROPERTY(QUrl url MEMBER _url)
+
 public:
     static AccountPtr create();
-    ~Account();
+    ~Account() override;
 
     AccountPtr sharedFromThis();
 
@@ -104,9 +109,6 @@ public:
     void setUrl(const QUrl &url);
     QUrl url() const { return _url; }
 
-    /// Adjusts _userVisibleUrl once the host to use is discovered.
-    void setUserVisibleHost(const QString &host);
-
     /**
      * @brief The possibly themed dav path for the account. It has
      *        a trailing slash.
@@ -114,17 +116,9 @@ public:
      */
     QString davPath() const;
     void setDavPath(const QString &s) { _davPath = s; }
-    void setNonShib(bool nonShib);
 
     /** Returns webdav entry URL, based on url() */
     QUrl davUrl() const;
-
-    /** Returns the legacy permalink url for a file.
-     *
-     * This uses the old way of manually building the url. New code should
-     * use the "privatelink" property accessible via PROPFIND.
-     */
-    QUrl deprecatedPrivateLinkUrl(const QByteArray &numericFileId) const;
 
     /** Holds the accounts credentials */
     AbstractCredentials *credentials() const;
@@ -139,7 +133,7 @@ public:
     QNetworkReply *sendRawRequest(const QByteArray &verb,
         const QUrl &url,
         QNetworkRequest req = QNetworkRequest(),
-        QIODevice *data = 0);
+        QIODevice *data = nullptr);
 
     /** Create and start network job for a simple one-off request.
      *
@@ -148,7 +142,7 @@ public:
     SimpleNetworkJob *sendRequest(const QByteArray &verb,
         const QUrl &url,
         QNetworkRequest req = QNetworkRequest(),
-        QIODevice *data = 0);
+        QIODevice *data = nullptr);
 
     /** The ssl configuration during the first connection */
     QSslConfiguration getOrCreateSslConfig();
@@ -214,11 +208,7 @@ public:
      */
     bool serverVersionUnsupported() const;
 
-    // Fixed from 8.1 https://github.com/owncloud/client/issues/3730
-    /** Detects a specific bug in older server versions */
-    bool rootEtagChangesNotOnlySubFolderEtags();
-
-    /** True when the server supports HTTP2  */
+    /** True when the server connection is using HTTP2  */
     bool isHttp2Supported() { return _http2Supported; }
     void setHttp2Supported(bool value) { _http2Supported = value; }
 
@@ -264,7 +254,7 @@ protected Q_SLOTS:
     void slotCredentialsAsked();
 
 private:
-    Account(QObject *parent = 0);
+    Account(QObject *parent = nullptr);
     void setSharedThis(AccountPtr sharedThis);
 
     QWeakPointer<Account> _sharedThis;
@@ -276,14 +266,6 @@ private:
 #endif
     QMap<QString, QVariant> _settingsMap;
     QUrl _url;
-
-    /** If url to use for any user-visible urls.
-     *
-     * If the server configures overwritehost this can be different from
-     * the connection url in _url. We retrieve the visible host through
-     * the ocs/v1.php/config endpoint in ConnectionValidator.
-     */
-    QUrl _userVisibleUrl;
 
     QList<QSslCertificate> _approvedCerts;
     QSslConfiguration _sslConfiguration;

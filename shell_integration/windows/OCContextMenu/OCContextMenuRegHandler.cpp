@@ -12,8 +12,6 @@
 * details.
 */
 
-#include "stdafx.h"
-
 #include "OCContextMenuRegHandler.h"
 #include "RegDelnode.h"
 #include <strsafe.h>
@@ -33,13 +31,23 @@ HRESULT SetHKCRRegistryKeyAndValue(PCWSTR pszSubKey, PCWSTR pszValueName, PCWSTR
 
     if (SUCCEEDED(hr))
     {
+        DWORD cbData;
+        const BYTE * lpData;
+
         if (pszData != NULL)
         {
             // Set the specified value of the key.
-            DWORD cbData = lstrlen(pszData) * sizeof(*pszData);
-            hr = HRESULT_FROM_WIN32(RegSetValueEx(hKey, pszValueName, 0,
-                REG_SZ, reinterpret_cast<const BYTE *>(pszData), cbData));
+            cbData = lstrlen(pszData) * sizeof(*pszData);
+            lpData = reinterpret_cast<const BYTE *>(pszData);
         }
+        else
+        {
+            cbData = 0;
+            lpData = NULL;
+        }
+
+        hr = HRESULT_FROM_WIN32(RegSetValueEx(hKey, pszValueName, 0,
+            REG_SZ, lpData, cbData));
 
         RegCloseKey(hKey);
     }
@@ -89,6 +97,11 @@ HRESULT OCContextMenuRegHandler::RegisterInprocServer(PCWSTR pszModule, const CL
     if (SUCCEEDED(hr))
     {
         hr = SetHKCRRegistryKeyAndValue(szSubkey, NULL, pszFriendlyName);
+
+        // Create the HKCR\CLSID\{<CLSID>}\ContextMenuOptIn subkey.
+        if (SUCCEEDED(hr)) {
+            hr = SetHKCRRegistryKeyAndValue(szSubkey, L"ContextMenuOptIn", NULL);
+        }
 
         // Create the HKCR\CLSID\{<CLSID>}\InprocServer32 key.
         if (SUCCEEDED(hr))

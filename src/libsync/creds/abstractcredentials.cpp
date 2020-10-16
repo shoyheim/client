@@ -24,14 +24,14 @@ namespace OCC {
 Q_LOGGING_CATEGORY(lcCredentials, "sync.credentials", QtInfoMsg)
 
 AbstractCredentials::AbstractCredentials()
-    : _account(0)
+    : _account(nullptr)
     , _wasFetched(false)
 {
 }
 
 void AbstractCredentials::setAccount(Account *account)
 {
-    ENFORCE(!_account, "should only setAccount once");
+    OC_ENFORCE_X(!_account, "should only setAccount once");
     _account = account;
 }
 
@@ -47,8 +47,8 @@ QString AbstractCredentials::keychainKey(const QString &url, const QString &user
         return QString();
     }
 
-    if (!u.endsWith(QChar('/'))) {
-        u.append(QChar('/'));
+    if (!u.endsWith(QLatin1Char('/'))) {
+        u.append(QLatin1Char('/'));
     }
 
     QString key = user + QLatin1Char(':') + u;
@@ -61,7 +61,7 @@ QString AbstractCredentials::keychainKey(const QString &url, const QString &user
         // It's safe to do that since the key format is changing for 2.4
         // anyway to include the account ids. That means old keys can be
         // migrated to new namespaced keys on windows for 2.4.
-        key.prepend(QCoreApplication::applicationName() + "_");
+        key.prepend(QCoreApplication::applicationName() + QLatin1Char('_'));
 #endif
     }
     return key;

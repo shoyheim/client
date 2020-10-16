@@ -22,10 +22,12 @@
 #include <QNetworkCookieJar>
 #include <QNetworkConfiguration>
 #include <QUuid>
+#include <QLibraryInfo>
 
 #include "cookiejar.h"
 #include "accessmanager.h"
 #include "common/utility.h"
+#include "httplogger.h"
 
 namespace OCC {
 
@@ -34,30 +36,11 @@ Q_LOGGING_CATEGORY(lcAccessManager, "sync.accessmanager", QtInfoMsg)
 AccessManager::AccessManager(QObject *parent)
     : QNetworkAccessManager(parent)
 {
-#if defined(Q_OS_MAC)
-    // FIXME Workaround http://stackoverflow.com/a/15707366/2941 https://bugreports.qt-project.org/browse/QTBUG-30434
-    QNetworkProxy proxy = this->proxy();
-    proxy.setHostName(" ");
-    setProxy(proxy);
-#endif
-
 #ifndef Q_OS_LINUX
     // Atempt to workaround for https://github.com/owncloud/client/issues/3969
     setConfiguration(QNetworkConfiguration());
 #endif
     setCookieJar(new CookieJar);
-}
-
-void AccessManager::setRawCookie(const QByteArray &rawCookie, const QUrl &url)
-{
-    QNetworkCookie cookie(rawCookie.left(rawCookie.indexOf('=')),
-        rawCookie.mid(rawCookie.indexOf('=') + 1));
-    qCDebug(lcAccessManager) << cookie.name() << cookie.value();
-    QList<QNetworkCookie> cookieList;
-    cookieList.append(cookie);
-
-    QNetworkCookieJar *jar = cookieJar();
-    jar->setCookiesFromUrl(cookieList, url);
 }
 
 static QByteArray generateRequestId()
@@ -70,12 +53,6 @@ static QByteArray generateRequestId()
 QNetworkReply *AccessManager::createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData)
 {
     QNetworkRequest newRequest(request);
-
-    if (newRequest.hasRawHeader("cookie")) {
-        // This will set the cookie into the QNetworkCookieJar which will then override the cookie header
-        setRawCookie(request.rawHeader("cookie"), request.url());
-    }
-
     newRequest.setRawHeader(QByteArray("User-Agent"), Utility::userAgentString());
 
     // Some firewalls reject requests that have a "User-Agent" but no "Accept" header
@@ -93,14 +70,17 @@ QNetworkReply *AccessManager::createRequest(QNetworkAccessManager::Operation op,
     qInfo(lcAccessManager) << op << verb << newRequest.url().toString() << "has X-Request-ID" << requestId;
     newRequest.setRawHeader("X-Request-ID", requestId);
 
-#if QT_VERSION >= QT_VERSION_CHECK(5, 9, 4)
-    // only enable HTTP2 with Qt 5.9.4 because old Qt have too many bugs (e.g. QTBUG-64359 is fixed in >= Qt 5.9.4)
-    if (newRequest.url().scheme() == "https") { // Not for "http": QTBUG-61397
-        newRequest.setAttribute(QNetworkRequest::HTTP2AllowedAttribute, true);
-    }
-#endif
+    if (newRequest.url().scheme() == QLatin1String("https")) { // Not for "http": QTBUG-61397
+        // http2 seems to cause issues, as with our recommended server setup we don't support http2, disable it by default for now
+        static const bool http2EnabledEnv = qEnvironmentVariableIntValue("OWNCLOUD_HTTP2_ENABLED") == 1;
 
-    return QNetworkAccessManager::createRequest(op, newRequest, outgoingData);
+        newRequest.setAttribute(QNetworkRequest::HTTP2AllowedAttribute, http2EnabledEnv);
+    }
+    HttpLogger::logRequest(newRequest, op, outgoingData);
+
+    const auto reply = QNetworkAccessManager::createRequest(op, newRequest, outgoingData);
+    HttpLogger::logReplyOnFinished(reply);
+    return reply;
 }
 
 } // namespace OCC

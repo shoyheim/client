@@ -27,8 +27,10 @@
 
 namespace OCC {
 
-static int patternCol = 0;
-static int deletableCol = 1;
+static const int patternCol = 0;
+static const int deletableCol = 1;
+static const int skippedLinesRole = Qt::UserRole;
+static const int isGlobalRole = Qt::UserRole + 1;
 
 IgnoreListEditor::IgnoreListEditor(QWidget *parent)
     : QDialog(parent)
@@ -37,21 +39,16 @@ IgnoreListEditor::IgnoreListEditor(QWidget *parent)
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     ui->setupUi(this);
 
-    ui->descriptionLabel->setText(tr("Files or folders matching a pattern will not be synchronized.\n\n"
-                                     "Items where deletion is allowed will be deleted if they prevent a "
-                                     "directory from being removed. "
-                                     "This is useful for meta data."));
-
     ConfigFile cfgFile;
     readOnlyTooltip = tr("This entry is provided by the system at '%1' "
                          "and cannot be modified in this view.")
                           .arg(QDir::toNativeSeparators(cfgFile.excludeFile(ConfigFile::SystemScope)));
 
-    addPattern(".csync_journal.db*", /*deletable=*/false, /*readonly=*/true);
-    addPattern("._sync_*.db*", /*deletable=*/false, /*readonly=*/true);
-    addPattern(".sync_*.db*", /*deletable=*/false, /*readonly=*/true);
-    readIgnoreFile(cfgFile.excludeFile(ConfigFile::SystemScope), true);
-    readIgnoreFile(cfgFile.excludeFile(ConfigFile::UserScope), false);
+    addPattern(".csync_journal.db*", /*deletable=*/false, /*readonly=*/true, /*global=*/true);
+    addPattern("._sync_*.db*", /*deletable=*/false, /*readonly=*/true, /*global=*/true);
+    addPattern(".sync_*.db*", /*deletable=*/false, /*readonly=*/true, /*global=*/true);
+    readIgnoreFile(cfgFile.excludeFile(ConfigFile::SystemScope), /*global=*/true);
+    readIgnoreFile(cfgFile.excludeFile(ConfigFile::UserScope), /*global=*/false);
 
     connect(this, &QDialog::accepted, this, &IgnoreListEditor::slotUpdateLocalIgnoreList);
     ui->removePushButton->setEnabled(false);
@@ -62,18 +59,11 @@ IgnoreListEditor::IgnoreListEditor(QWidget *parent)
     ui->tableWidget->resizeColumnsToContents();
     ui->tableWidget->horizontalHeader()->setSectionResizeMode(patternCol, QHeaderView::Stretch);
     ui->tableWidget->verticalHeader()->setVisible(false);
-
-    ui->syncHiddenFilesCheckBox->setChecked(!FolderMan::instance()->ignoreHiddenFiles());
 }
 
 IgnoreListEditor::~IgnoreListEditor()
 {
     delete ui;
-}
-
-bool IgnoreListEditor::ignoreHiddenFiles()
-{
-    return !ui->syncHiddenFilesCheckBox->isChecked();
 }
 
 void IgnoreListEditor::slotItemSelectionChanged()
@@ -102,15 +92,21 @@ void IgnoreListEditor::slotUpdateLocalIgnoreList()
         for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
             QTableWidgetItem *patternItem = ui->tableWidget->item(row, patternCol);
             QTableWidgetItem *deletableItem = ui->tableWidget->item(row, deletableCol);
-            if (patternItem->flags() & Qt::ItemIsEnabled) {
-                QByteArray prepend;
-                if (deletableItem->checkState() == Qt::Checked) {
-                    prepend = "]";
-                } else if (patternItem->text().startsWith('#')) {
-                    prepend = "\\";
-                }
-                ignores.write(prepend + patternItem->text().toUtf8() + '\n');
+
+            if (patternItem->data(isGlobalRole).toBool())
+                continue;
+
+            QStringList skippedLines = patternItem->data(skippedLinesRole).toStringList();
+            for (const auto &line : skippedLines)
+                ignores.write(line.toUtf8() + '\n');
+
+            QByteArray prepend;
+            if (deletableItem->checkState() == Qt::Checked) {
+                prepend = "]";
+            } else if (patternItem->text().startsWith('#')) {
+                prepend = "\\";
             }
+            ignores.write(prepend + patternItem->text().toUtf8() + '\n');
         }
     } else {
         QMessageBox::warning(this, tr("Could not open file"),
@@ -120,18 +116,12 @@ void IgnoreListEditor::slotUpdateLocalIgnoreList()
 
     FolderMan *folderMan = FolderMan::instance();
 
-    /* handle the hidden file checkbox */
-
-    /* the ignoreHiddenFiles flag is a folder specific setting, but for now, it is
-     * handled globally. Save it to every folder that is defined.
-     */
-    folderMan->setIgnoreHiddenFiles(ignoreHiddenFiles());
-
     // We need to force a remote discovery after a change of the ignore list.
     // Otherwise we would not download the files/directories that are no longer
     // ignored (because the remote etag did not change)   (issue #3172)
     foreach (Folder *folder, folderMan->map()) {
         folder->journalDb()->forceRemoteDiscoveryNextSync();
+        folder->slotNextSyncFullLocalDiscovery();
         folderMan->scheduleFolder(folder);
     }
 }
@@ -146,36 +136,54 @@ void IgnoreListEditor::slotAddPattern()
     if (!okClicked || pattern.isEmpty())
         return;
 
-    addPattern(pattern, false, false);
+    addPattern(pattern, /*deletable=*/false, /*readonly=*/false, /*global=*/false);
     ui->tableWidget->scrollToBottom();
 }
 
-void IgnoreListEditor::readIgnoreFile(const QString &file, bool readOnly)
+void IgnoreListEditor::readIgnoreFile(const QString &file, bool global)
 {
     QFile ignores(file);
-    if (ignores.open(QIODevice::ReadOnly)) {
-        while (!ignores.atEnd()) {
-            QString line = QString::fromUtf8(ignores.readLine());
-            line.chop(1);
-            if (!line.isEmpty() && !line.startsWith("#")) {
-                bool deletable = false;
-                if (line.startsWith(']')) {
-                    deletable = true;
-                    line = line.mid(1);
-                }
-                addPattern(line, deletable, readOnly);
-            }
+    if (!ignores.open(QIODevice::ReadOnly))
+        return;
+
+    QStringList skippedLines;
+    bool readonly = global; // global ignores default to read-only
+
+    while (!ignores.atEnd()) {
+        QString line = QString::fromUtf8(ignores.readLine());
+        line.chop(1);
+
+        // Collect empty lines and comments, we want to preserve them
+        if (line.isEmpty() || line.startsWith("#")) {
+            skippedLines.append(line);
+            // A directive that prohibits editing in the ui
+            if (line == "#!readonly")
+                readonly = true;
+            continue;
         }
+
+        bool deletable = false;
+        if (line.startsWith(']')) {
+            deletable = true;
+            line = line.mid(1);
+        }
+
+        // Add and reset
+        addPattern(line, deletable, readonly, global, skippedLines);
+        skippedLines.clear();
+        readonly = global;
     }
 }
 
-int IgnoreListEditor::addPattern(const QString &pattern, bool deletable, bool readOnly)
+int IgnoreListEditor::addPattern(const QString &pattern, bool deletable, bool readOnly, bool global, const QStringList &skippedLines)
 {
     int newRow = ui->tableWidget->rowCount();
     ui->tableWidget->setRowCount(newRow + 1);
 
     QTableWidgetItem *patternItem = new QTableWidgetItem;
     patternItem->setText(pattern);
+    patternItem->setData(skippedLinesRole, skippedLines);
+    patternItem->setData(isGlobalRole, global);
     ui->tableWidget->setItem(newRow, patternCol, patternItem);
 
     QTableWidgetItem *deletableItem = new QTableWidgetItem;

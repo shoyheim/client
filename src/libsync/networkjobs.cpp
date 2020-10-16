@@ -29,7 +29,10 @@
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
+#ifndef TOKEN_AUTH_ONLY
 #include <QPainter>
+#include <QPainterPath>
+#endif
 
 #include "networkjobs.h"
 #include "account.h"
@@ -50,6 +53,25 @@ Q_LOGGING_CATEGORY(lcProppatchJob, "sync.networkjob.proppatch", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcJsonApiJob, "sync.networkjob.jsonapi", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcDetermineAuthTypeJob, "sync.networkjob.determineauthtype", QtInfoMsg)
 
+QByteArray parseEtag(const QByteArray &header)
+{
+    if (header.isEmpty())
+        return QByteArray();
+    QByteArray arr = header;
+
+    // Weak E-Tags can appear when gzip compression is on, see #3946
+    if (arr.startsWith("W/"))
+        arr = arr.mid(2);
+
+    // https://github.com/owncloud/client/issues/1195
+    arr.replace("-gzip", "");
+
+    if (arr.length() >= 2 && arr.startsWith('"') && arr.endsWith('"')) {
+        arr = arr.mid(1, arr.length() - 2);
+    }
+    return arr;
+}
+
 RequestEtagJob::RequestEtagJob(AccountPtr account, const QString &path, QObject *parent)
     : AbstractNetworkJob(account, path, parent)
 {
@@ -58,16 +80,7 @@ RequestEtagJob::RequestEtagJob(AccountPtr account, const QString &path, QObject 
 void RequestEtagJob::start()
 {
     QNetworkRequest req;
-    if (_account && _account->rootEtagChangesNotOnlySubFolderEtags()) {
-        // Fixed from 8.1 https://github.com/owncloud/client/issues/3730
-        req.setRawHeader("Depth", "0");
-    } else {
-        // Let's always request all entries inside a directory. There are/were bugs in the server
-        // where a root or root-folder ETag is not updated when its contents change. We work around
-        // this by concatenating the ETags of the root and its contents.
-        req.setRawHeader("Depth", "1");
-        // See https://github.com/owncloud/core/issues/5255 and others
-    }
+    req.setRawHeader("Depth", "0");
 
     QByteArray xml("<?xml version=\"1.0\" ?>\n"
                    "<d:propfind xmlns:d=\"DAV:\">\n"
@@ -90,24 +103,33 @@ void RequestEtagJob::start()
 bool RequestEtagJob::finished()
 {
     qCInfo(lcEtagJob) << "Request Etag of" << reply()->request().url() << "FINISHED WITH STATUS"
-                      << reply()->error()
-                      << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString());
+                      <<  replyStatusString();
 
-    if (reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute) == 207) {
+    auto httpCode = reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (httpCode == 207) {
         // Parse DAV response
         QXmlStreamReader reader(reply());
-        reader.addExtraNamespaceDeclaration(QXmlStreamNamespaceDeclaration("d", "DAV:"));
+        reader.addExtraNamespaceDeclaration(QXmlStreamNamespaceDeclaration(QStringLiteral("d"), QStringLiteral("DAV:")));
         QString etag;
         while (!reader.atEnd()) {
             QXmlStreamReader::TokenType type = reader.readNext();
             if (type == QXmlStreamReader::StartElement && reader.namespaceUri() == QLatin1String("DAV:")) {
                 QString name = reader.name().toString();
                 if (name == QLatin1String("getetag")) {
-                    etag += reader.readElementText();
+                    auto etagText = reader.readElementText();
+                    auto parsedTag = parseEtag(etagText.toUtf8());
+                    if (!parsedTag.isEmpty()) {
+                        etag += QString::fromUtf8(parsedTag);
+                    } else {
+                        etag += etagText;
+                    }
                 }
             }
         }
         emit etagRetreived(etag);
+        emit finishedWithResult(etag);
+    } else {
+        emit finishedWithResult(HttpError{ httpCode, errorString() });
     }
     return true;
 }
@@ -148,8 +170,7 @@ void MkColJob::start()
 bool MkColJob::finished()
 {
     qCInfo(lcMkColJob) << "MKCOL of" << reply()->request().url() << "FINISHED WITH STATUS"
-                       << reply()->error()
-                       << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString());
+                       << replyStatusString();
 
     emit finished(reply()->error());
     return true;
@@ -165,7 +186,7 @@ static QString readContentsAsString(QXmlStreamReader &reader)
         QXmlStreamReader::TokenType type = reader.readNext();
         if (type == QXmlStreamReader::StartElement) {
             level++;
-            result += "<" + reader.name().toString() + ">";
+            result += QLatin1Char('<') + reader.name().toString() + QLatin1Char('>');
         } else if (type == QXmlStreamReader::Characters) {
             result += reader.text();
         } else if (type == QXmlStreamReader::EndElement) {
@@ -173,7 +194,7 @@ static QString readContentsAsString(QXmlStreamReader &reader)
             if (level < 0) {
                 break;
             }
-            result += "</" + reader.name().toString() + ">";
+            result += QStringLiteral("</") + reader.name().toString() + QLatin1Char('>');
         }
 
     } while (!reader.atEnd());
@@ -189,7 +210,7 @@ bool LsColXMLParser::parse(const QByteArray &xml, QHash<QString, qint64> *sizes,
 {
     // Parse DAV response
     QXmlStreamReader reader(xml);
-    reader.addExtraNamespaceDeclaration(QXmlStreamNamespaceDeclaration("d", "DAV:"));
+    reader.addExtraNamespaceDeclaration(QXmlStreamNamespaceDeclaration(QStringLiteral("d"), QStringLiteral("DAV:")));
 
     QStringList folders;
     QString currentHref;
@@ -219,7 +240,7 @@ bool LsColXMLParser::parse(const QByteArray &xml, QHash<QString, qint64> *sizes,
                 insidePropstat = true;
             } else if (name == QLatin1String("status") && insidePropstat) {
                 QString httpStatus = reader.readElementText();
-                if (httpStatus.startsWith("HTTP/1.1 200")) {
+                if (httpStatus.startsWith(QLatin1String("HTTP/1.1 200"))) {
                     currentPropsHaveHttp200 = true;
                 } else {
                     currentPropsHaveHttp200 = false;
@@ -236,7 +257,7 @@ bool LsColXMLParser::parse(const QByteArray &xml, QHash<QString, qint64> *sizes,
         if (type == QXmlStreamReader::StartElement && insidePropstat && insideProp) {
             // All those elements are properties
             QString propertyContent = readContentsAsString(reader);
-            if (name == QLatin1String("resourcetype") && propertyContent.contains("collection")) {
+            if (name == QLatin1String("resourcetype") && propertyContent.contains(QLatin1String("collection"))) {
                 folders.append(currentHref);
             } else if (name == QLatin1String("size")) {
                 bool ok = false;
@@ -251,21 +272,21 @@ bool LsColXMLParser::parse(const QByteArray &xml, QHash<QString, qint64> *sizes,
         // End elements with DAV:
         if (type == QXmlStreamReader::EndElement) {
             if (reader.namespaceUri() == QLatin1String("DAV:")) {
-                if (reader.name() == "response") {
-                    if (currentHref.endsWith('/')) {
+                if (reader.name() == QLatin1String("response")) {
+                    if (currentHref.endsWith(QLatin1Char('/'))) {
                         currentHref.chop(1);
                     }
                     emit directoryListingIterated(currentHref, currentHttp200Properties);
                     currentHref.clear();
                     currentHttp200Properties.clear();
-                } else if (reader.name() == "propstat") {
+                } else if (reader.name() == QLatin1String("propstat")) {
                     insidePropstat = false;
                     if (currentPropsHaveHttp200) {
                         currentHttp200Properties = QMap<QString, QString>(currentTmpProperties);
                     }
                     currentTmpProperties.clear();
                     currentPropsHaveHttp200 = false;
-                } else if (reader.name() == "prop") {
+                } else if (reader.name() == QLatin1String("prop")) {
                     insideProp = false;
                 }
             }
@@ -355,12 +376,11 @@ void LsColJob::start()
 bool LsColJob::finished()
 {
     qCInfo(lcLsColJob) << "LSCOL of" << reply()->request().url() << "FINISHED WITH STATUS"
-                       << reply()->error()
-                       << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString());
+                       << replyStatusString();
 
     QString contentType = reply()->header(QNetworkRequest::ContentTypeHeader).toString();
     int httpCode = reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (httpCode == 207 && contentType.contains("application/xml; charset=utf-8")) {
+    if (httpCode == 207 && contentType.contains(QLatin1String("application/xml; charset=utf-8"))) {
         LsColXMLParser parser;
         connect(&parser, &LsColXMLParser::directoryListingSubfolders,
             this, &LsColJob::directoryListingSubfolders);
@@ -390,12 +410,12 @@ bool LsColJob::finished()
 /*********************************************************************************************/
 
 namespace {
-    const char statusphpC[] = "status.php";
-    const char owncloudDirC[] = "owncloud/";
+    const QString statusphpC() { return QStringLiteral("status.php"); }
+    const QString owncloudDirC() { return QStringLiteral("owncloud/"); }
 }
 
 CheckServerJob::CheckServerJob(AccountPtr account, QObject *parent)
-    : AbstractNetworkJob(account, QLatin1String(statusphpC), parent)
+    : AbstractNetworkJob(account, statusphpC(), parent)
     , _subdirFallback(false)
     , _permanentRedirects(0)
 {
@@ -426,7 +446,7 @@ void CheckServerJob::onTimedOut()
 
 QString CheckServerJob::version(const QJsonObject &info)
 {
-    return info.value(QLatin1String("version")).toString();
+    return info.value(QLatin1String("version")).toString() + QLatin1Char('-') + info.value(QLatin1String("productname")).toString();
 }
 
 QString CheckServerJob::versionString(const QJsonObject &info)
@@ -459,8 +479,7 @@ void CheckServerJob::encryptedSlot()
 
 void CheckServerJob::slotRedirected(QNetworkReply *reply, const QUrl &targetUrl, int redirectCount)
 {
-    QByteArray slashStatusPhp("/");
-    slashStatusPhp.append(statusphpC);
+    const auto slashStatusPhp = QStringLiteral("/%1").arg(statusphpC());
 
     int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QString path = targetUrl.path();
@@ -496,7 +515,7 @@ bool CheckServerJob::finished()
     // at the original location
     if ((reply()->error() == QNetworkReply::ContentNotFoundError) && (!_subdirFallback)) {
         _subdirFallback = true;
-        setPath(QLatin1String(owncloudDirC) + QLatin1String(statusphpC));
+        setPath(owncloudDirC() + statusphpC());
         start();
         qCInfo(lcCheckServerJob) << "Retrying with" << reply()->url();
         return false;
@@ -516,7 +535,7 @@ bool CheckServerJob::finished()
         }
 
         qCInfo(lcCheckServerJob) << "status.php returns: " << status << " " << reply()->error() << " Reply: " << reply();
-        if (status.object().contains("installed")) {
+        if (status.object().contains(QStringLiteral("installed"))) {
             emit instanceFound(_serverUrl, status.object());
         } else {
             qCWarning(lcCheckServerJob) << "No proper answer on " << reply()->url();
@@ -581,15 +600,14 @@ QList<QByteArray> PropfindJob::properties() const
 bool PropfindJob::finished()
 {
     qCInfo(lcPropfindJob) << "PROPFIND of" << reply()->request().url() << "FINISHED WITH STATUS"
-                          << reply()->error()
-                          << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString());
+                          << replyStatusString();
 
     int http_result_code = reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
     if (http_result_code == 207) {
         // Parse DAV response
         QXmlStreamReader reader(reply());
-        reader.addExtraNamespaceDeclaration(QXmlStreamNamespaceDeclaration("d", "DAV:"));
+        reader.addExtraNamespaceDeclaration(QXmlStreamNamespaceDeclaration(QStringLiteral("d"), QStringLiteral("DAV:")));
 
         QVariantMap items;
         // introduced to nesting is ignored
@@ -631,9 +649,9 @@ AvatarJob::AvatarJob(AccountPtr account, const QString &userId, int size, QObjec
     : AbstractNetworkJob(account, QString(), parent)
 {
     if (account->serverVersionInt() >= Account::makeServerVersion(10, 0, 0)) {
-        _avatarUrl = Utility::concatUrlPath(account->url(), QString("remote.php/dav/avatars/%1/%2.png").arg(userId, QString::number(size)));
+        _avatarUrl = Utility::concatUrlPath(account->url(), QStringLiteral("remote.php/dav/avatars/%1/%2.png").arg(userId, QString::number(size)));
     } else {
-        _avatarUrl = Utility::concatUrlPath(account->url(), QString("index.php/avatar/%1/%2").arg(userId, QString::number(size)));
+        _avatarUrl = Utility::concatUrlPath(account->url(), QStringLiteral("index.php/avatar/%1/%2").arg(userId, QString::number(size)));
     }
 }
 
@@ -743,8 +761,7 @@ QMap<QByteArray, QByteArray> ProppatchJob::properties() const
 bool ProppatchJob::finished()
 {
     qCInfo(lcProppatchJob) << "PROPPATCH of" << reply()->request().url() << "FINISHED WITH STATUS"
-                           << reply()->error()
-                           << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString());
+                           << replyStatusString();
 
     int http_result_code = reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
@@ -791,10 +808,14 @@ void JsonApiJob::addQueryParams(const QUrlQuery &params)
 
 void JsonApiJob::start()
 {
-    QNetworkRequest req;
+    startWithRequest(QNetworkRequest());
+}
+
+void OCC::JsonApiJob::startWithRequest(QNetworkRequest req)
+{
     req.setRawHeader("OCS-APIREQUEST", "true");
     auto query = _additionalParams;
-    query.addQueryItem(QLatin1String("format"), QLatin1String("json"));
+    query.addQueryItem(QStringLiteral("format"), QStringLiteral("json"));
     QUrl url = Utility::concatUrlPath(account()->url(), path(), query);
     sendRequest("GET", url, req);
     AbstractNetworkJob::start();
@@ -803,8 +824,7 @@ void JsonApiJob::start()
 bool JsonApiJob::finished()
 {
     qCInfo(lcJsonApiJob) << "JsonApiJob of" << reply()->request().url() << "FINISHED WITH STATUS"
-                         << reply()->error()
-                         << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString());
+                         << replyStatusString();
 
     int statusCode = 0;
 
@@ -815,15 +835,15 @@ bool JsonApiJob::finished()
     }
 
     QString jsonStr = QString::fromUtf8(reply()->readAll());
-    if (jsonStr.contains("<?xml version=\"1.0\"?>")) {
-        QRegExp rex("<statuscode>(\\d+)</statuscode>");
+    if (jsonStr.contains(QLatin1String("<?xml version=\"1.0\"?>"))) {
+        QRegExp rex(QStringLiteral("<statuscode>(\\d+)</statuscode>"));
         if (jsonStr.contains(rex)) {
             // this is a error message coming back from ocs.
             statusCode = rex.cap(1).toInt();
         }
 
     } else {
-        QRegExp rex("\"statuscode\":(\\d+),");
+        QRegExp rex(QStringLiteral("\"statuscode\":(\\d+),"));
         // example: "{"ocs":{"meta":{"status":"ok","statuscode":100,"message":null},"data":{"version":{"major":8,"minor":"... (504)
         if (jsonStr.contains(rex)) {
             statusCode = rex.cap(1).toInt();
@@ -858,57 +878,22 @@ void DetermineAuthTypeJob::start()
     req.setAttribute(HttpCredentials::DontAddCredentialsAttribute, true);
     // Don't reuse previous auth credentials
     req.setAttribute(QNetworkRequest::AuthenticationReuseAttribute, QNetworkRequest::Manual);
-    // Don't send cookies, we can't determine the auth type if we're logged in
-    req.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
 
-    // Start two parallel requests, one determines whether it's a shib server
-    // and the other checks the HTTP auth method.
-    auto get = _account->sendRequest("GET", _account->davUrl(), req);
     auto propfind = _account->sendRequest("PROPFIND", _account->davUrl(), req);
-    get->setTimeout(30 * 1000);
     propfind->setTimeout(30 * 1000);
-    get->setIgnoreCredentialFailure(true);
     propfind->setIgnoreCredentialFailure(true);
-
-    connect(get, &AbstractNetworkJob::redirected, this, [this, get](QNetworkReply *, const QUrl &target, int) {
-#ifndef NO_SHIBBOLETH
-        QRegExp shibbolethyWords("SAML|wayf");
-        shibbolethyWords.setCaseSensitivity(Qt::CaseInsensitive);
-        if (target.toString().contains(shibbolethyWords)) {
-            _resultGet = Shibboleth;
-            get->setFollowRedirects(false);
-        }
-#else
-        Q_UNUSED(target)
-#endif
-    });
-    connect(get, &SimpleNetworkJob::finishedSignal, this, [this]() {
-        _getDone = true;
-        checkBothDone();
-    });
     connect(propfind, &SimpleNetworkJob::finishedSignal, this, [this](QNetworkReply *reply) {
         auto authChallenge = reply->rawHeader("WWW-Authenticate").toLower();
+        auto result = AuthType::Basic;
         if (authChallenge.contains("bearer ")) {
-            _resultPropfind = OAuth;
+            result = AuthType::OAuth;
         } else if (authChallenge.isEmpty()) {
             qCWarning(lcDetermineAuthTypeJob) << "Did not receive WWW-Authenticate reply to auth-test PROPFIND";
         }
-        _propfindDone = true;
-        checkBothDone();
+        qCInfo(lcDetermineAuthTypeJob) << "Auth type for" << _account->davUrl() << "is" << result;
+        emit this->authType(result);
+        this->deleteLater();
     });
-}
-
-void DetermineAuthTypeJob::checkBothDone()
-{
-    if (!_getDone || !_propfindDone)
-        return;
-    auto result = _resultPropfind;
-    // OAuth > Shib > Basic
-    if (_resultGet == Shibboleth && result != OAuth)
-        result = Shibboleth;
-    qCInfo(lcDetermineAuthTypeJob) << "Auth type for" << _account->davUrl() << "is" << result;
-    emit authType(result);
-    deleteLater();
 }
 
 SimpleNetworkJob::SimpleNetworkJob(AccountPtr account, QObject *parent)
@@ -930,14 +915,9 @@ bool SimpleNetworkJob::finished()
     return true;
 }
 
-void fetchPrivateLinkUrl(AccountPtr account, const QString &remotePath,
-    const QByteArray &numericFileId, QObject *target,
+void fetchPrivateLinkUrl(AccountPtr account, const QString &remotePath, QObject *target,
     std::function<void(const QString &url)> targetFun)
 {
-    QString oldUrl;
-    if (!numericFileId.isEmpty())
-        oldUrl = account->deprecatedPrivateLinkUrl(numericFileId).toString(QUrl::FullyEncoded);
-
     // Retrieve the new link by PROPFIND
     PropfindJob *job = new PropfindJob(account, remotePath, target);
     job->setProperties(
@@ -946,18 +926,11 @@ void fetchPrivateLinkUrl(AccountPtr account, const QString &remotePath,
         << "http://owncloud.org/ns:privatelink");
     job->setTimeout(10 * 1000);
     QObject::connect(job, &PropfindJob::result, target, [=](const QVariantMap &result) {
-        auto privateLinkUrl = result["privatelink"].toString();
-        auto numericFileId = result["fileid"].toByteArray();
+        auto privateLinkUrl = result[QStringLiteral("privatelink")].toString();
+        auto numericFileId = result[QStringLiteral("fileid")].toByteArray();
         if (!privateLinkUrl.isEmpty()) {
             targetFun(privateLinkUrl);
-        } else if (!numericFileId.isEmpty()) {
-            targetFun(account->deprecatedPrivateLinkUrl(numericFileId).toString(QUrl::FullyEncoded));
-        } else {
-            targetFun(oldUrl);
         }
-    });
-    QObject::connect(job, &PropfindJob::finishedWithError, target, [=](QNetworkReply *) {
-        targetFun(oldUrl);
     });
     job->start();
 }

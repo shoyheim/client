@@ -58,9 +58,8 @@ class ActivityWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit ActivityWidget(QWidget *parent = 0);
-    ~ActivityWidget();
-    QSize sizeHint() const Q_DECL_OVERRIDE { return ownCloudGui::settingsDialogSize(); }
+    explicit ActivityWidget(QWidget *parent = nullptr);
+    ~ActivityWidget() override;
     void storeActivityList(QTextStream &ts);
 
     /**
@@ -92,7 +91,7 @@ private slots:
     void slotNotifyNetworkError(QNetworkReply *);
     void slotNotifyServerFinished(const QString &reply, int replyCode);
     void endNotificationRequest(NotificationWidget *widget, int replyCode);
-    void scheduleWidgetToRemove(NotificationWidget *widget, int milliseconds = 4500);
+    void scheduleWidgetToRemove(NotificationWidget *widget, int milliseconds = 100);
     void slotCheckToCleanWidgets();
 
 private:
@@ -130,9 +129,8 @@ class ActivitySettings : public QWidget
 {
     Q_OBJECT
 public:
-    explicit ActivitySettings(QWidget *parent = 0);
-    ~ActivitySettings();
-    QSize sizeHint() const Q_DECL_OVERRIDE { return ownCloudGui::settingsDialogSize(); }
+    explicit ActivitySettings(QWidget *parent = nullptr);
+    ~ActivitySettings() override;
 
 public slots:
     void slotRefresh(AccountState *ptr);
@@ -153,7 +151,7 @@ signals:
     void guiLog(const QString &, const QString &);
 
 private:
-    bool event(QEvent *e) Q_DECL_OVERRIDE;
+    bool event(QEvent *e) override;
 
     QTabWidget *_tab;
     int _activityTabId;

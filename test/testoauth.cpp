@@ -8,7 +8,7 @@
 #include <QtTest/QtTest>
 #include <QDesktopServices>
 
-#include "gui/creds/oauth.h"
+#include "libsync/creds/oauth.h"
 #include "syncenginetestutils.h"
 #include "theme.h"
 #include "common/asserts.h"
@@ -22,7 +22,7 @@ signals:
     void hooked(const QUrl &);
 public:
     DesktopServiceHook() { QDesktopServices::setUrlHandler("oauthtest", this, "hooked"); }
-} desktopServiceHook;
+};
 
 static const QUrl sOAuthTestServer("oauthtest://someserver/owncloud");
 
@@ -33,6 +33,8 @@ class FakePostReply : public QNetworkReply
 public:
     std::unique_ptr<QIODevice> payload;
     bool aborted = false;
+    bool redirectToPolicy = false;
+    bool redirectToToken = false;
 
     FakePostReply(QNetworkAccessManager::Operation op, const QNetworkRequest &request,
                   std::unique_ptr<QIODevice> payload_, QObject *parent)
@@ -49,6 +51,24 @@ public:
     Q_INVOKABLE virtual void respond() {
         if (aborted) {
             setError(OperationCanceledError, "Operation Canceled");
+            emit metaDataChanged();
+            emit finished();
+            return;
+        } else if (redirectToPolicy) {
+            setHeader(QNetworkRequest::LocationHeader, "/my.policy");
+            setAttribute(QNetworkRequest::RedirectionTargetAttribute, "/my.policy");
+            setAttribute(QNetworkRequest::HttpStatusCodeAttribute, 302); // 302 might or might not lose POST data in rfc
+            setHeader(QNetworkRequest::ContentLengthHeader, 0);
+            emit metaDataChanged();
+            emit finished();
+            return;
+        } else if (redirectToToken) {
+            // Redirect to self
+            QVariant destination = QVariant(sOAuthTestServer.toString()+QLatin1String("/index.php/apps/oauth2/api/v1/token"));
+            setHeader(QNetworkRequest::LocationHeader, destination);
+            setAttribute(QNetworkRequest::RedirectionTargetAttribute, destination);
+            setAttribute(QNetworkRequest::HttpStatusCodeAttribute, 307); // 307 explicitly in rfc says to not lose POST data
+            setHeader(QNetworkRequest::ContentLengthHeader, 0);
             emit metaDataChanged();
             emit finished();
             return;
@@ -90,6 +110,7 @@ public:
 class OAuthTestCase : public QObject
 {
     Q_OBJECT
+    DesktopServiceHook desktopServiceHook;
 public:
     enum State { StartState, BrowserOpened, TokenAsked, CustomState } state = StartState;
     Q_ENUM(State);
@@ -111,7 +132,11 @@ public:
         account->setUrl(sOAuthTestServer);
         account->setCredentials(new FakeCredentials{fakeQnam});
         fakeQnam->setParent(this);
-        fakeQnam->setOverride([this](QNetworkAccessManager::Operation op, const QNetworkRequest &req, QIODevice *) {
+        fakeQnam->setOverride([this](QNetworkAccessManager::Operation op, const QNetworkRequest &req, QIODevice *device)  {
+            if (req.url().path().endsWith(".well-known/openid-configuration"))
+                return this->wellKnownReply(op, req);
+            OC_ASSERT(device);
+            OC_ASSERT(device->bytesAvailable() > 0); // OAuth2 always sends around POST data.
             return this->tokenReply(op, req);
         });
 
@@ -120,7 +145,7 @@ public:
 
         oauth.reset(new OAuth(account.data(), nullptr));
         QObject::connect(oauth.data(), &OAuth::result, this, &OAuthTestCase::oauthResult);
-        oauth->start();
+        oauth->startAuthentication();
         QTRY_VERIFY(done());
     }
 
@@ -134,7 +159,7 @@ public:
         QCOMPARE(query.queryItemValue(QLatin1String("client_id")), Theme::instance()->oauthClientId());
         QUrl redirectUri(query.queryItemValue(QLatin1String("redirect_uri")));
         QCOMPARE(redirectUri.host(), QLatin1String("localhost"));
-        redirectUri.setQuery("code=" + code);
+        redirectUri.setQuery(QStringLiteral("code=%1&state=%2").arg(code, query.queryItemValue(QStringLiteral("state"))));
         createBrowserReply(QNetworkRequest(redirectUri));
     }
 
@@ -148,28 +173,35 @@ public:
         QCOMPARE(sender(), browserReply.data());
         QCOMPARE(state, TokenAsked);
         browserReply->deleteLater();
+        QCOMPARE(QNetworkReply::NoError, browserReply->error());
         QCOMPARE(browserReply->rawHeader("Location"), QByteArray("owncloud://success"));
         replyToBrowserOk = true;
-    };
+    }
 
     virtual QNetworkReply *tokenReply(QNetworkAccessManager::Operation op, const QNetworkRequest &req)
     {
-        ASSERT(state == BrowserOpened);
+        OC_ASSERT(state == BrowserOpened);
         state = TokenAsked;
-        ASSERT(op == QNetworkAccessManager::PostOperation);
-        ASSERT(req.url().toString().startsWith(sOAuthTestServer.toString()));
-        ASSERT(req.url().path() == sOAuthTestServer.path() + "/index.php/apps/oauth2/api/v1/token");
+        OC_ASSERT(op == QNetworkAccessManager::PostOperation);
+        OC_ASSERT(req.url().toString().startsWith(sOAuthTestServer.toString()));
+        OC_ASSERT(req.url().path() == sOAuthTestServer.path() + "/index.php/apps/oauth2/api/v1/token");
         std::unique_ptr<QBuffer> payload(new QBuffer());
         payload->setData(tokenReplyPayload());
         return new FakePostReply(op, req, std::move(payload), fakeQnam);
     }
 
+    virtual QNetworkReply *wellKnownReply(QNetworkAccessManager::Operation op, const QNetworkRequest &req)
+    {
+        return new FakeErrorReply(op, req, fakeQnam, 404);
+    }
+
     virtual QByteArray tokenReplyPayload() const {
+        // the dummy server provides the user admin
         QJsonDocument jsondata(QJsonObject{
                 { "access_token", "123" },
                 { "refresh_token" , "456" },
                 { "message_url",  "owncloud://success"},
-                { "user_id", "789" },
+                { "user_id", "admin" },
                 { "token_type", "Bearer" }
         });
         return jsondata.toJson();
@@ -178,7 +210,7 @@ public:
     virtual void oauthResult(OAuth::Result result, const QString &user, const QString &token , const QString &refreshToken) {
         QCOMPARE(state, TokenAsked);
         QCOMPARE(result, OAuth::LoggedIn);
-        QCOMPARE(user, QString("789"));
+        QCOMPARE(user, QString("admin"));
         QCOMPARE(token, QString("123"));
         QCOMPARE(refreshToken, QString("456"));
         gotAuthOk = true;
@@ -196,18 +228,51 @@ private slots:
         test.test();
     }
 
+
+    void testWrongUser()
+    {
+        struct Test : OAuthTestCase {
+            QByteArray tokenReplyPayload() const override {
+                // the dummy server provides the user admin
+                QJsonDocument jsondata(QJsonObject{
+                    { "access_token", "123" },
+                    { "refresh_token" , "456" },
+                    { "message_url",  "owncloud://success"},
+                    { "user_id", "wrong_user" },
+                    { "token_type", "Bearer" }
+                });
+                return jsondata.toJson();
+            }
+
+            void browserReplyFinished() override {
+                QCOMPARE(sender(), browserReply.data());
+                QCOMPARE(state, TokenAsked);
+                browserReply->deleteLater();
+                QCOMPARE(QNetworkReply::AuthenticationRequiredError, browserReply->error());
+            }
+
+            bool done() const override{
+                return true;
+            }
+        };
+        Test test;
+        test.test();
+    }
+
     // Test for https://github.com/owncloud/client/pull/6057
     void testCloseBrowserDontCrash()
     {
         struct Test : OAuthTestCase {
             QNetworkReply *tokenReply(QNetworkAccessManager::Operation op, const QNetworkRequest & req) override
             {
-                ASSERT(browserReply);
+                OC_ASSERT(browserReply);
                 // simulate the fact that the browser is closing the connection
                 browserReply->abort();
-                QCoreApplication::processEvents();
+                // don't process network events, as it messes up the execution order and
+                // causes an Qt internal crash
+                QCoreApplication::processEvents(QEventLoop::ExcludeSocketNotifiers);
 
-                ASSERT(state == BrowserOpened);
+                OC_ASSERT(state == BrowserOpened);
                 state = TokenAsked;
 
                 std::unique_ptr<QBuffer> payload(new QBuffer);
@@ -229,7 +294,7 @@ private slots:
     {
         // Test that we can send random garbage to the litening socket and it does not prevent the connection
         struct Test : OAuthTestCase {
-            virtual QNetworkReply *createBrowserReply(const QNetworkRequest &request) override {
+            QNetworkReply *createBrowserReply(const QNetworkRequest &request) override {
                 QTimer::singleShot(0, this, [this, request] {
                     auto port = request.url().port();
                     state = CustomState;
@@ -275,7 +340,74 @@ private slots:
         } test;
         test.test();
     }
+
+    void testTokenUrlHasRedirect()
+    {
+        struct Test : OAuthTestCase {
+            int redirectsDone = 0;
+            QNetworkReply *tokenReply(QNetworkAccessManager::Operation op, const QNetworkRequest & request) override
+            {
+                OC_ASSERT(browserReply);
+                // Kind of reproduces what we had in https://github.com/owncloud/enterprise/issues/2951 (not 1:1)
+                if (redirectsDone == 0) {
+                    std::unique_ptr<QBuffer> payload(new QBuffer());
+                    payload->setData("");
+                    SlowFakePostReply *reply = new SlowFakePostReply(op, request, std::move(payload), this);
+                    reply->redirectToPolicy = true;
+                    redirectsDone++;
+                    return reply;
+                } else if  (redirectsDone == 1) {
+                    std::unique_ptr<QBuffer> payload(new QBuffer());
+                    payload->setData("");
+                    SlowFakePostReply *reply = new SlowFakePostReply(op, request, std::move(payload), this);
+                    reply->redirectToToken = true;
+                    redirectsDone++;
+                    return reply;
+                } else {
+                    // ^^ This is with a custom reply and not actually HTTP, so we're testing the HTTP redirect code
+                    // we have in AbstractNetworkJob::slotFinished()
+                    redirectsDone++;
+                    return OAuthTestCase::tokenReply(op, request);
+                }
+            }
+        } test;
+        test.test();
+    }
+
+    void testWellKnown() {
+        struct Test : OAuthTestCase {
+            int redirectsDone = 0;
+            QNetworkReply * wellKnownReply(QNetworkAccessManager::Operation op, const QNetworkRequest & req) override {
+                OC_ASSERT(op == QNetworkAccessManager::GetOperation);
+                QJsonDocument jsondata(QJsonObject{
+                    { "authorization_endpoint", QJsonValue(
+                            "oauthtest://openidserver" + sOAuthTestServer.path() + "/index.php/apps/oauth2/authorize") },
+                    { "token_endpoint" , "oauthtest://openidserver/token_endpoint" }
+                });
+                return new FakePayloadReply(op, req, jsondata.toJson(), fakeQnam);
+            }
+
+            void openBrowserHook(const QUrl & url) override {
+                OC_ASSERT(url.host() == "openidserver");
+                QUrl url2 = url;
+                url2.setHost(sOAuthTestServer.host());
+                OAuthTestCase::openBrowserHook(url2);
+            }
+
+            QNetworkReply *tokenReply(QNetworkAccessManager::Operation op, const QNetworkRequest & request) override
+            {
+                OC_ASSERT(browserReply);
+                OC_ASSERT(request.url().toString().startsWith("oauthtest://openidserver/token_endpoint"));
+                auto req = request;
+                req.setUrl(request.url().toString().replace("oauthtest://openidserver/token_endpoint",
+                        sOAuthTestServer.toString() + "/index.php/apps/oauth2/api/v1/token"));
+                return OAuthTestCase::tokenReply(op, req);
+            }
+        } test;
+        test.test();
+    }
 };
+
 
 QTEST_GUILESS_MAIN(TestOAuth)
 #include "testoauth.moc"

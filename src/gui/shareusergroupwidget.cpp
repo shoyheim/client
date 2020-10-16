@@ -288,17 +288,19 @@ void ShareUserGroupWidget::slotCompleterActivated(const QModelIndex &index)
      * https://github.com/owncloud/core/issues/22122#issuecomment-185637344
      * https://github.com/owncloud/client/issues/4996
      */
+    const SharePermissions defaultPermissions = static_cast<SharePermissions>(_account->capabilities().defaultPermissions());
     if (sharee->type() == Sharee::Federated
         && _account->serverVersionInt() < Account::makeServerVersion(9, 1, 0)) {
-        int permissions = SharePermissionRead | SharePermissionUpdate;
+        SharePermissions permissions = SharePermissionRead | SharePermissionUpdate;
         if (!_isFile) {
             permissions |= SharePermissionCreate | SharePermissionDelete;
         }
+        permissions &= defaultPermissions;
         _manager->createShare(_sharePath, Share::ShareType(sharee->type()),
-            sharee->shareWith(), SharePermission(permissions));
+            sharee->shareWith(), permissions);
     } else {
         _manager->createShare(_sharePath, Share::ShareType(sharee->type()),
-            sharee->shareWith(), SharePermissionDefault);
+            sharee->shareWith(), _maxSharingPermissions & defaultPermissions);
     }
 
     _ui->shareeLineEdit->setEnabled(false);
@@ -381,7 +383,7 @@ ShareUserLine::ShareUserLine(QSharedPointer<Share> share,
     _ui->permissionToolButton->setMenu(menu);
     _ui->permissionToolButton->setPopupMode(QToolButton::InstantPopup);
 
-    QIcon icon(QLatin1String(":/client/resources/more.png"));
+    QIcon icon = QIcon(QStringLiteral(":/client/resources/more.svg"));
     _ui->permissionToolButton->setIcon(icon);
 
     // If there's only a single entry in the detailed permission menu, hide it
@@ -416,8 +418,8 @@ ShareUserLine::ShareUserLine(QSharedPointer<Share> share,
     connect(share.data(), &Share::permissionsSet, this, &ShareUserLine::slotPermissionsSet);
     connect(share.data(), &Share::shareDeleted, this, &ShareUserLine::slotShareDeleted);
 
-    _ui->deleteShareButton->setIcon(QIcon::fromTheme(QLatin1String("user-trash"),
-        QIcon(QLatin1String(":/client/resources/delete.png"))));
+    _ui->deleteShareButton->setIcon(QIcon::fromTheme(QStringLiteral("user-trash"),
+        QIcon(QStringLiteral(":/client/resources/delete.svg"))));
 
     if (!share->account()->capabilities().shareResharing()) {
         _ui->permissionShare->hide();
@@ -593,25 +595,16 @@ QSharedPointer<Share> ShareUserLine::share() const
 
 void ShareUserLine::displayPermissions()
 {
-    auto perm = _share->getPermissions();
+    const SharePermissions perm = _share->getPermissions();
 
-    _permissionUpdate->setChecked(false);
-    _permissionCreate->setChecked(false);
-    _permissionDelete->setChecked(false);
-    if (perm & SharePermissionUpdate) {
-        _permissionUpdate->setChecked(true);
-    }
-    if (!_isFile && perm & SharePermissionCreate) {
-        _permissionCreate->setChecked(true);
-    }
-    if (!_isFile && perm & SharePermissionDelete) {
-        _permissionDelete->setChecked(true);
-    }
+    _permissionUpdate->setChecked(perm & SharePermissionUpdate);
+    _permissionCreate->setChecked(!_isFile && perm & SharePermissionCreate);
+    _permissionDelete->setChecked(!_isFile && perm & SharePermissionDelete);
 
     if (perm & SharePermissionUpdate
         && (_isFile
-               || (perm & SharePermissionCreate
-                      && perm & SharePermissionDelete))) {
+            || (perm & SharePermissionCreate
+                && perm & SharePermissionDelete))) {
         _ui->permissionsEdit->setCheckState(Qt::Checked);
     } else if (perm & (SharePermissionUpdate | SharePermissionCreate | SharePermissionDelete)) {
         _ui->permissionsEdit->setCheckState(Qt::PartiallyChecked);
@@ -619,9 +612,6 @@ void ShareUserLine::displayPermissions()
         _ui->permissionsEdit->setCheckState(Qt::Unchecked);
     }
 
-    _ui->permissionShare->setCheckState(Qt::Unchecked);
-    if (_share->getPermissions() & SharePermissionShare) {
-        _ui->permissionShare->setCheckState(Qt::Checked);
-    }
+    _ui->permissionShare->setChecked(perm & SharePermissionShare);
 }
 }

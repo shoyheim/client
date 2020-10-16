@@ -49,34 +49,34 @@ QString SyncResult::statusString() const
 
     switch (stat) {
     case Undefined:
-        re = QLatin1String("Undefined");
+        re = QStringLiteral("Undefined");
         break;
     case NotYetStarted:
-        re = QLatin1String("Not yet Started");
+        re = QStringLiteral("Not yet Started");
         break;
     case SyncRunning:
-        re = QLatin1String("Sync Running");
+        re = QStringLiteral("Sync Running");
         break;
     case Success:
-        re = QLatin1String("Success");
+        re = QStringLiteral("Success");
         break;
     case Error:
-        re = QLatin1String("Error");
+        re = QStringLiteral("Error");
         break;
     case SetupError:
-        re = QLatin1String("SetupError");
+        re = QStringLiteral("SetupError");
         break;
     case SyncPrepare:
-        re = QLatin1String("SyncPrepare");
+        re = QStringLiteral("SyncPrepare");
         break;
     case Problem:
-        re = QLatin1String("Success, some files were ignored.");
+        re = QStringLiteral("Success, some files were ignored.");
         break;
     case SyncAbortRequested:
-        re = QLatin1String("Sync Request aborted by user");
+        re = QStringLiteral("Sync Request aborted by user");
         break;
     case Paused:
-        re = QLatin1String("Sync Paused");
+        re = QStringLiteral("Sync Paused");
         break;
     }
     return re;
@@ -185,10 +185,8 @@ void SyncResult::processCompletedItem(const SyncFileItemPtr &item)
                 // nothing.
                 break;
             }
-        } else if (item->_direction == SyncFileItem::None) {
-            if (item->_instruction == CSYNC_INSTRUCTION_IGNORE) {
-                _foundFilesNotSynced = true;
-            }
+        } else if (item->_instruction == CSYNC_INSTRUCTION_IGNORE) {
+            _foundFilesNotSynced = true;
         }
     }
 }

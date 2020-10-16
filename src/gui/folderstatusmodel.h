@@ -20,6 +20,7 @@
 #include <QLoggingCategory>
 #include <QVector>
 #include <QElapsedTimer>
+#include <QPointer>
 
 class QNetworkReply;
 namespace OCC {
@@ -28,6 +29,7 @@ Q_DECLARE_LOGGING_CATEGORY(lcFolderStatus)
 
 class Folder;
 class ProgressInfo;
+class LsColJob;
 
 /**
  * @brief The FolderStatusModel class
@@ -37,29 +39,29 @@ class FolderStatusModel : public QAbstractItemModel
 {
     Q_OBJECT
 public:
-    FolderStatusModel(QObject *parent = 0);
-    ~FolderStatusModel();
+    FolderStatusModel(QObject *parent = nullptr);
+    ~FolderStatusModel() override;
     void setAccountState(const AccountState *accountState);
 
-    Qt::ItemFlags flags(const QModelIndex &) const Q_DECL_OVERRIDE;
-    QVariant data(const QModelIndex &index, int role) const Q_DECL_OVERRIDE;
-    bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) Q_DECL_OVERRIDE;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const Q_DECL_OVERRIDE;
-    int rowCount(const QModelIndex &parent = QModelIndex()) const Q_DECL_OVERRIDE;
-    QModelIndex index(int row, int column = 0, const QModelIndex &parent = QModelIndex()) const Q_DECL_OVERRIDE;
-    QModelIndex parent(const QModelIndex &child) const Q_DECL_OVERRIDE;
-    bool canFetchMore(const QModelIndex &parent) const Q_DECL_OVERRIDE;
-    void fetchMore(const QModelIndex &parent) Q_DECL_OVERRIDE;
-    bool hasChildren(const QModelIndex &parent = QModelIndex()) const Q_DECL_OVERRIDE;
+    Qt::ItemFlags flags(const QModelIndex &) const override;
+    QVariant data(const QModelIndex &index, int role) const override;
+    bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex index(int row, int column = 0, const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex &child) const override;
+    bool canFetchMore(const QModelIndex &parent) const override;
+    void fetchMore(const QModelIndex &parent) override;
+    void resetAndFetch(const QModelIndex &parent);
+    bool hasChildren(const QModelIndex &parent = QModelIndex()) const override;
 
     struct SubFolderInfo
     {
         SubFolderInfo()
-            : _folder(0)
+            : _folder(nullptr)
             , _size(0)
             , _isExternal(false)
             , _fetched(false)
-            , _fetching(false)
             , _hasError(false)
             , _fetchingLabel(false)
             , _isUndecided(false)
@@ -75,7 +77,7 @@ public:
         bool _isExternal;
 
         bool _fetched; // If we did the LSCOL for this folder already
-        bool _fetching; // Whether a LSCOL job is currently running
+        QPointer<LsColJob> _fetchingJob; // Currently running LsColJob
         bool _hasError; // If the last fetching job ended in an error
         QString _lastErrorString;
         bool _fetchingLabel; // Whether a 'fetching in progress' label is shown.
@@ -151,7 +153,7 @@ private slots:
     void slotShowFetchProgress();
 
 private:
-    QStringList createBlackList(OCC::FolderStatusModel::SubFolderInfo *root,
+    QStringList createBlackList(const OCC::FolderStatusModel::SubFolderInfo &root,
         const QStringList &oldBlackList) const;
     const AccountState *_accountState;
     bool _dirty; // If the selective sync checkboxes were changed

@@ -55,6 +55,8 @@ NetworkSettings::NetworkSettings(QWidget *parent)
         _ui->manualSettings, &QWidget::setEnabled);
     connect(_ui->manualProxyRadioButton, &QAbstractButton::toggled,
         _ui->typeComboBox, &QWidget::setEnabled);
+    connect(_ui->manualProxyRadioButton, &QAbstractButton::toggled,
+        this, &NetworkSettings::checkAccountLocalhost);
 
     loadProxySettings();
     loadBWLimitSettings();
@@ -80,6 +82,7 @@ NetworkSettings::NetworkSettings(QWidget *parent)
     // Warn about empty proxy host
     connect(_ui->hostLineEdit, &QLineEdit::textChanged, this, &NetworkSettings::checkEmptyProxyHost);
     checkEmptyProxyHost();
+    checkAccountLocalhost();
 }
 
 NetworkSettings::~NetworkSettings()
@@ -87,10 +90,6 @@ NetworkSettings::~NetworkSettings()
     delete _ui;
 }
 
-QSize NetworkSettings::sizeHint() const
-{
-    return QSize(ownCloudGui::settingsDialogSize().width(), QWidget::sizeHint().height());
-}
 
 void NetworkSettings::loadProxySettings()
 {
@@ -164,6 +163,9 @@ void NetworkSettings::saveProxySettings()
         cfgFile.setProxyType(QNetworkProxy::DefaultProxy);
     } else if (_ui->manualProxyRadioButton->isChecked()) {
         int type = _ui->typeComboBox->itemData(_ui->typeComboBox->currentIndex()).toInt();
+        QString host = _ui->hostLineEdit->text();
+        if (host.isEmpty())
+            type = QNetworkProxy::NoProxy;
         bool needsAuth = _ui->authRequiredcheckBox->isChecked();
         QString user = _ui->userLineEdit->text();
         QString pass = _ui->passwordLineEdit->text();
@@ -216,5 +218,37 @@ void NetworkSettings::checkEmptyProxyHost()
         _ui->hostLineEdit->setStyleSheet(QString());
     }
 }
+
+void NetworkSettings::showEvent(QShowEvent *event)
+{
+    if (!event->spontaneous()
+        && _ui->manualProxyRadioButton->isChecked()
+        && _ui->hostLineEdit->text().isEmpty()) {
+        _ui->noProxyRadioButton->setChecked(true);
+        checkEmptyProxyHost();
+        saveProxySettings();
+    }
+    checkAccountLocalhost();
+
+    QWidget::showEvent(event);
+}
+
+
+void NetworkSettings::checkAccountLocalhost()
+{
+    bool visible = false;
+    if (_ui->manualProxyRadioButton->isChecked()) {
+        // Check if at least one account is using localhost, because Qt proxy settings have no
+        // effect for localhost (#7169)
+        for (const auto &account : AccountManager::instance()->accounts()) {
+            const auto host = account->account()->url().host();
+            // Some typical url for localhost
+            if (host == "localhost" || host.startsWith("127.") || host == "[::1]")
+                visible = true;
+        }
+    }
+    _ui->labelLocalhost->setVisible(visible);
+}
+
 
 } // namespace OCC

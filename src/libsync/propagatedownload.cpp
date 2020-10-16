@@ -24,6 +24,7 @@
 #include "propagatorjobs.h"
 #include "common/checksums.h"
 #include "common/asserts.h"
+#include "common/vfs.h"
 
 #include <QLoggingCategory>
 #include <QNetworkAccessManager>
@@ -47,7 +48,7 @@ QString OWNCLOUDSYNC_EXPORT createDownloadTmpFileName(const QString &previous)
 {
     QString tmpFileName;
     QString tmpPath;
-    int slashPos = previous.lastIndexOf('/');
+    int slashPos = previous.lastIndexOf(QLatin1Char('/'));
     // work with both pathed filenames and only filenames
     if (slashPos == -1) {
         tmpFileName = previous;
@@ -59,51 +60,41 @@ QString OWNCLOUDSYNC_EXPORT createDownloadTmpFileName(const QString &previous)
     int overhead = 1 + 1 + 2 + 8; // slash dot dot-tilde ffffffff"
     int spaceForFileName = qMin(254, tmpFileName.length() + overhead) - overhead;
     if (tmpPath.length() > 0) {
-        return tmpPath + '/' + '.' + tmpFileName.left(spaceForFileName) + ".~" + (QString::number(uint(qrand() % 0xFFFFFFFF), 16));
+        return QStringLiteral("%1/.%2.~%3").arg(tmpPath, tmpFileName.left(spaceForFileName), QString::number(uint(qrand() % 0xFFFFFFFF), 16));
     } else {
-        return '.' + tmpFileName.left(spaceForFileName) + ".~" + (QString::number(uint(qrand() % 0xFFFFFFFF), 16));
+        return QStringLiteral(".%1.~%2").arg(tmpFileName.left(spaceForFileName), QString::number(uint(qrand() % 0xFFFFFFFF), 16));
     }
 }
 
 // DOES NOT take ownership of the device.
-GETFileJob::GETFileJob(AccountPtr account, const QString &path, QFile *device,
+GETFileJob::GETFileJob(AccountPtr account, const QString &path, QIODevice *device,
     const QMap<QByteArray, QByteArray> &headers, const QByteArray &expectedEtagForResume,
-    quint64 resumeStart, QObject *parent)
-    : AbstractNetworkJob(account, path, parent)
+    qint64 resumeStart, QObject *parent)
+    : GETJob(account, path, parent)
     , _device(device)
     , _headers(headers)
     , _expectedEtagForResume(expectedEtagForResume)
+    , _expectedContentLength(-1)
+    , _contentLength(-1)
     , _resumeStart(resumeStart)
-    , _errorStatus(SyncFileItem::NoStatus)
-    , _bandwidthLimited(false)
-    , _bandwidthChoked(false)
-    , _bandwidthQuota(0)
-    , _bandwidthManager(0)
     , _hasEmittedFinishedSignal(false)
-    , _lastModified()
 {
 }
 
-GETFileJob::GETFileJob(AccountPtr account, const QUrl &url, QFile *device,
+GETFileJob::GETFileJob(AccountPtr account, const QUrl &url, QIODevice *device,
     const QMap<QByteArray, QByteArray> &headers, const QByteArray &expectedEtagForResume,
-    quint64 resumeStart, QObject *parent)
-
-    : AbstractNetworkJob(account, url.toEncoded(), parent)
+    qint64 resumeStart, QObject *parent)
+    : GETJob(account, url.toString(QUrl::FullyEncoded), parent)
     , _device(device)
     , _headers(headers)
     , _expectedEtagForResume(expectedEtagForResume)
+    , _expectedContentLength(-1)
+    , _contentLength(-1)
     , _resumeStart(resumeStart)
-    , _errorStatus(SyncFileItem::NoStatus)
     , _directDownloadUrl(url)
-    , _bandwidthLimited(false)
-    , _bandwidthChoked(false)
-    , _bandwidthQuota(0)
-    , _bandwidthManager(0)
     , _hasEmittedFinishedSignal(false)
-    , _lastModified()
 {
 }
-
 
 void GETFileJob::start()
 {
@@ -132,10 +123,6 @@ void GETFileJob::start()
         _bandwidthManager->registerDownloadJob(this);
     }
 
-    if (reply()->error() != QNetworkReply::NoError) {
-        qCWarning(lcGetJob) << " Network error: " << errorString();
-    }
-
     connect(this, &AbstractNetworkJob::networkActivity, account().data(), &Account::propagatorNetworkActivity);
 
     AbstractNetworkJob::start();
@@ -147,6 +134,7 @@ void GETFileJob::newReplyHook(QNetworkReply *reply)
 
     connect(reply, &QNetworkReply::metaDataChanged, this, &GETFileJob::slotMetaDataChanged);
     connect(reply, &QIODevice::readyRead, this, &GETFileJob::slotReadyRead);
+    connect(reply, &QNetworkReply::finished, this, &GETFileJob::slotReadyRead);
     connect(reply, &QNetworkReply::downloadProgress, this, &GETFileJob::downloadProgress);
 }
 
@@ -158,14 +146,23 @@ void GETFileJob::slotMetaDataChanged()
 
     int httpStatus = reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
-    // Ignore redirects
-    if (httpStatus == 301 || httpStatus == 302 || httpStatus == 303 || httpStatus == 307 || httpStatus == 308)
+    if (httpStatus == 301 || httpStatus == 302 || httpStatus == 303 || httpStatus == 307
+        || httpStatus == 308 || httpStatus == 401) {
+        // Redirects and auth failures (oauth token renew) are handled by AbstractNetworkJob and
+        // will end up restarting the job. We do not want to process further data from the initial
+        // request. newReplyHook() will reestablish signal connections for the follow-up request.
+        bool ok = disconnect(reply(), &QNetworkReply::finished, this, &GETFileJob::slotReadyRead)
+            && disconnect(reply(), &QNetworkReply::readyRead, this, &GETFileJob::slotReadyRead);
+        OC_ASSERT(ok);
         return;
+    }
 
     // If the status code isn't 2xx, don't write the reply body to the file.
     // For any error: handle it when the job is finished, not here.
     if (httpStatus / 100 != 2) {
-        _device->close();
+        // Disable the buffer limit, as we don't limit the bandwidth for error messages.
+        // (We are only going to do a readAll() at the end.)
+        reply()->setReadBufferSize(0);
         return;
     }
     if (reply()->error() != QNetworkReply::NoError) {
@@ -193,12 +190,22 @@ void GETFileJob::slotMetaDataChanged()
         return;
     }
 
-    quint64 start = 0;
-    QByteArray ranges = reply()->rawHeader("Content-Range");
+    _contentLength = reply()->header(QNetworkRequest::ContentLengthHeader).toLongLong();
+    if (_expectedContentLength != -1 && _contentLength != _expectedContentLength) {
+        qCWarning(lcGetJob) << "We received a different content length than expected!"
+                            << _expectedContentLength << "vs" << _contentLength;
+        _errorString = tr("We received an unexpected download Content-Length.");
+        _errorStatus = SyncFileItem::NormalError;
+        reply()->abort();
+        return;
+    }
+
+    qint64 start = 0;
+    QString ranges = QString::fromUtf8(reply()->rawHeader("Content-Range"));
     if (!ranges.isEmpty()) {
-        QRegExp rx("bytes (\\d+)-");
+        QRegExp rx(QStringLiteral("bytes (\\d+)-"));
         if (rx.indexIn(ranges) >= 0) {
-            start = rx.cap(1).toULongLong();
+            start = rx.cap(1).toLongLong();
         }
     }
     if (start != _resumeStart) {
@@ -229,24 +236,24 @@ void GETFileJob::slotMetaDataChanged()
     _saveBodyToFile = true;
 }
 
-void GETFileJob::setBandwidthManager(BandwidthManager *bwm)
+void GETJob::setBandwidthManager(BandwidthManager *bwm)
 {
     _bandwidthManager = bwm;
 }
 
-void GETFileJob::setChoked(bool c)
+void GETJob::setChoked(bool c)
 {
     _bandwidthChoked = c;
     QMetaObject::invokeMethod(this, "slotReadyRead", Qt::QueuedConnection);
 }
 
-void GETFileJob::setBandwidthLimited(bool b)
+void GETJob::setBandwidthLimited(bool b)
 {
     _bandwidthLimited = b;
     QMetaObject::invokeMethod(this, "slotReadyRead", Qt::QueuedConnection);
 }
 
-void GETFileJob::giveBandwidthQuota(qint64 q)
+void GETJob::giveBandwidthQuota(qint64 q)
 {
     _bandwidthQuota = q;
     qCDebug(lcGetJob) << "Got" << q << "bytes";
@@ -268,7 +275,7 @@ void GETFileJob::slotReadyRead()
     int bufferSize = qMin(1024 * 8ll, reply()->bytesAvailable());
     QByteArray buffer(bufferSize, Qt::Uninitialized);
 
-    while (reply()->bytesAvailable() > 0) {
+    while (reply()->bytesAvailable() > 0 && _saveBodyToFile) {
         if (_bandwidthChoked) {
             qCWarning(lcGetJob) << "Download choked";
             break;
@@ -292,27 +299,24 @@ void GETFileJob::slotReadyRead()
             return;
         }
 
-        if (_device->isOpen() && _saveBodyToFile) {
-            qint64 w = _device->write(buffer.constData(), r);
-            if (w != r) {
-                _errorString = _device->errorString();
-                _errorStatus = SyncFileItem::NormalError;
-                qCWarning(lcGetJob) << "Error while writing to file" << w << r << _errorString;
-                reply()->abort();
-                return;
-            }
+        qint64 w = _device->write(buffer.constData(), r);
+        if (w != r) {
+            _errorString = _device->errorString();
+            _errorStatus = SyncFileItem::NormalError;
+            qCWarning(lcGetJob) << "Error while writing to file" << w << r << _errorString;
+            reply()->abort();
+            return;
         }
     }
 
-    if (reply()->isFinished() && reply()->bytesAvailable() == 0) {
+    if (reply()->isFinished() && (reply()->bytesAvailable() == 0 || !_saveBodyToFile)) {
         qCDebug(lcGetJob) << "Actually finished!";
         if (_bandwidthManager) {
             _bandwidthManager->unregisterDownloadJob(this);
         }
         if (!_hasEmittedFinishedSignal) {
             qCInfo(lcGetJob) << "GET of" << reply()->request().url().toString() << "FINISHED WITH STATUS"
-                             << reply()->error()
-                             << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString())
+                             << replyStatusString()
                              << reply()->rawHeader("Content-Range") << reply()->rawHeader("Content-Length");
 
             emit finishedSignal();
@@ -322,9 +326,9 @@ void GETFileJob::slotReadyRead()
     }
 }
 
-void GETFileJob::onTimedOut()
+void GETJob::onTimedOut()
 {
-    qCWarning(lcGetJob) << "Timeout" << (reply() ? reply()->request().url() : path());
+    qCWarning(lcGetJob) << "Timeout" << (reply() ? reply()->request().url().path() : path());
     if (!reply())
         return;
     _errorString = tr("Connection Timeout");
@@ -332,7 +336,7 @@ void GETFileJob::onTimedOut()
     reply()->abort();
 }
 
-QString GETFileJob::errorString() const
+QString GETJob::errorString() const
 {
     if (!_errorString.isEmpty()) {
         return _errorString;
@@ -342,11 +346,48 @@ QString GETFileJob::errorString() const
 
 void PropagateDownloadFile::start()
 {
-    if (propagator()->_abortRequested.fetchAndAddRelaxed(0))
+    if (propagator()->_abortRequested)
         return;
 
     qCDebug(lcPropagateDownload) << _item->_file << propagator()->_activeJobList.count();
     _stopwatch.start();
+
+    auto &syncOptions = propagator()->syncOptions();
+    auto &vfs = syncOptions._vfs;
+
+    // For virtual files just dehydrate or create the file and be done
+    if (_item->_type == ItemTypeVirtualFileDehydration) {
+        QString fsPath = propagator()->fullLocalPath(_item->_file);
+        if (!FileSystem::verifyFileUnchanged(fsPath, _item->_previousSize, _item->_previousModtime)) {
+            propagator()->_anotherSyncNeeded = true;
+            done(SyncFileItem::SoftError, tr("File has changed since discovery"));
+            return;
+        }
+
+        qCDebug(lcPropagateDownload) << "dehydrating file" << _item->_file;
+        auto r = vfs->dehydratePlaceholder(*_item);
+        if (!r) {
+            done(SyncFileItem::NormalError, r.error());
+            return;
+        }
+        propagator()->_journal->deleteFileRecord(_item->_originalFile);
+        updateMetadata(false);
+        return;
+    }
+    if (vfs->mode() == Vfs::Off && _item->_type == ItemTypeVirtualFile) {
+        qCWarning(lcPropagateDownload) << "ignored virtual file type of" << _item->_file;
+        _item->_type = ItemTypeFile;
+    }
+    if (_item->_type == ItemTypeVirtualFile) {
+        qCDebug(lcPropagateDownload) << "creating virtual file" << _item->_file;
+        auto r = vfs->createPlaceholder(*_item);
+        if (!r) {
+            done(SyncFileItem::NormalError, r.error());
+            return;
+        }
+        updateMetadata(false);
+        return;
+    }
 
     if (_deleteExisting) {
         deleteExistingFolder();
@@ -372,7 +413,8 @@ void PropagateDownloadFile::start()
         computeChecksum->setChecksumType(parseChecksumHeaderType(_item->_checksumHeader));
         connect(computeChecksum, &ComputeChecksum::done,
             this, &PropagateDownloadFile::conflictChecksumComputed);
-        computeChecksum->start(propagator()->getFilePath(_item->_file));
+        propagator()->_activeJobList.append(this);
+        computeChecksum->start(propagator()->fullLocalPath(_item->_file));
         return;
     }
 
@@ -381,13 +423,14 @@ void PropagateDownloadFile::start()
 
 void PropagateDownloadFile::conflictChecksumComputed(const QByteArray &checksumType, const QByteArray &checksum)
 {
+    propagator()->_activeJobList.removeOne(this);
     if (makeChecksumHeader(checksumType, checksum) == _item->_checksumHeader) {
         // No download necessary, just update fs and journal metadata
         qCDebug(lcPropagateDownload) << _item->_file << "remote and local checksum match";
 
         // Apply the server mtime locally if necessary, ensuring the journal
         // and local mtimes end up identical
-        auto fn = propagator()->getFilePath(_item->_file);
+        auto fn = propagator()->fullLocalPath(_item->_file);
         if (_item->_modtime != _item->_previousModtime) {
             FileSystem::setModTime(fn, _item->_modtime);
             emit propagator()->touchedFile(fn);
@@ -401,7 +444,7 @@ void PropagateDownloadFile::conflictChecksumComputed(const QByteArray &checksumT
 
 void PropagateDownloadFile::startDownload()
 {
-    if (propagator()->_abortRequested.fetchAndAddRelaxed(0))
+    if (propagator()->_abortRequested)
         return;
 
     // do a klaas' case clash check.
@@ -413,40 +456,41 @@ void PropagateDownloadFile::startDownload()
     propagator()->reportProgress(*_item, 0);
 
     QString tmpFileName;
-    QByteArray expectedEtagForResume;
     const SyncJournalDb::DownloadInfo progressInfo = propagator()->_journal->getDownloadInfo(_item->_file);
     if (progressInfo._valid) {
         // if the etag has changed meanwhile, remove the already downloaded part.
         if (progressInfo._etag != _item->_etag) {
-            FileSystem::remove(propagator()->getFilePath(progressInfo._tmpfile));
+            FileSystem::remove(propagator()->fullLocalPath(progressInfo._tmpfile));
             propagator()->_journal->setDownloadInfo(_item->_file, SyncJournalDb::DownloadInfo());
         } else {
             tmpFileName = progressInfo._tmpfile;
-            expectedEtagForResume = progressInfo._etag;
+            _expectedEtagForResume = progressInfo._etag;
         }
     }
 
     if (tmpFileName.isEmpty()) {
         tmpFileName = createDownloadTmpFileName(_item->_file);
     }
+    _tmpFile.setFileName(propagator()->fullLocalPath(tmpFileName));
 
-    _tmpFile.setFileName(propagator()->getFilePath(tmpFileName));
-    if (!_tmpFile.open(QIODevice::Append | QIODevice::Unbuffered)) {
-        done(SyncFileItem::NormalError, _tmpFile.errorString());
+    _resumeStart = _tmpFile.size();
+    if (_resumeStart > 0 && _resumeStart == _item->_size) {
+        qCInfo(lcPropagateDownload) << "File is already complete, no need to download";
+        downloadFinished();
         return;
     }
 
-    FileSystem::setFileHidden(_tmpFile.fileName(), true);
-
-    _resumeStart = _tmpFile.size();
-    if (_resumeStart > 0) {
-        if (_resumeStart == _item->_size) {
-            qCInfo(lcPropagateDownload) << "File is already complete, no need to download";
-            _tmpFile.close();
-            downloadFinished();
-            return;
-        }
+    // Can't open(Append) read-only files, make sure to make
+    // file writable if it exists.
+    if (_tmpFile.exists())
+        FileSystem::setFileReadOnly(_tmpFile.fileName(), false);
+    if (!_tmpFile.open(QIODevice::Append | QIODevice::Unbuffered)) {
+        qCWarning(lcPropagateDownload) << "could not open temporary file" << _tmpFile.fileName();
+        done(SyncFileItem::NormalError, _tmpFile.errorString());
+        return;
     }
+    // Hide temporary after creation
+    FileSystem::setFileHidden(_tmpFile.fileName(), true);
 
     // If there's not enough space to fully download this file, stop.
     const auto diskSpaceResult = propagator()->diskSpaceCheck();
@@ -477,16 +521,21 @@ void PropagateDownloadFile::startDownload()
         pi._tmpfile = tmpFileName;
         pi._valid = true;
         propagator()->_journal->setDownloadInfo(_item->_file, pi);
-        propagator()->_journal->commit("download file start");
+        propagator()->_journal->commit(QStringLiteral("download file start"));
     }
 
+    startFullDownload();
+}
+
+void PropagateDownloadFile::startFullDownload()
+{
     QMap<QByteArray, QByteArray> headers;
 
     if (_item->_directDownloadUrl.isEmpty()) {
         // Normal job, download from oC instance
         _job = new GETFileJob(propagator()->account(),
-            propagator()->_remoteFolder + _item->_file,
-            &_tmpFile, headers, expectedEtagForResume, _resumeStart, this);
+            propagator()->fullRemotePath(_item->_file),
+            &_tmpFile, headers, _expectedEtagForResume, _resumeStart, this);
     } else {
         // We were provided a direct URL, use that one
         qCInfo(lcPropagateDownload) << "directDownloadUrl given for " << _item->_file << _item->_directDownloadUrl;
@@ -498,11 +547,12 @@ void PropagateDownloadFile::startDownload()
         QUrl url = QUrl::fromUserInput(_item->_directDownloadUrl);
         _job = new GETFileJob(propagator()->account(),
             url,
-            &_tmpFile, headers, expectedEtagForResume, _resumeStart, this);
+            &_tmpFile, headers, _expectedEtagForResume, _resumeStart, this);
     }
     _job->setBandwidthManager(&propagator()->_bandwidthManager);
-    connect(_job.data(), &GETFileJob::finishedSignal, this, &PropagateDownloadFile::slotGetFinished);
-    connect(_job.data(), &GETFileJob::downloadProgress, this, &PropagateDownloadFile::slotDownloadProgress);
+    connect(_job.data(), &GETJob::finishedSignal, this, &PropagateDownloadFile::slotGetFinished);
+    connect(qobject_cast<GETFileJob *>(_job.data()), &GETFileJob::downloadProgress,
+        this, &PropagateDownloadFile::slotDownloadProgress);
     propagator()->_activeJobList.append(this);
     _job->start();
 }
@@ -510,7 +560,7 @@ void PropagateDownloadFile::startDownload()
 qint64 PropagateDownloadFile::committedDiskSpace() const
 {
     if (_state == Running) {
-        return qBound(0ULL, _item->_size - _resumeStart - _downloadProgress, _item->_size);
+        return qBound(0LL, _item->_size - _resumeStart - _downloadProgress, _item->_size);
     }
     return 0;
 }
@@ -525,12 +575,15 @@ void PropagateDownloadFile::slotGetFinished()
 {
     propagator()->_activeJobList.removeOne(this);
 
-    GETFileJob *job = _job;
-    ASSERT(job);
+    GETJob *job = _job;
+    OC_ASSERT(job);
+
+    _item->_httpErrorCode = job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    _item->_responseTimeStamp = job->responseTimestamp();
+    _item->_requestId = job->requestId();
 
     QNetworkReply::NetworkError err = job->reply()->error();
     if (err != QNetworkReply::NoError) {
-        _item->_httpErrorCode = job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
         // If we sent a 'Range' header and get 416 back, we want to retry
         // without the header.
@@ -548,7 +601,7 @@ void PropagateDownloadFile::slotGetFinished()
 
         // Don't keep the temporary file if it is empty or we
         // used a bad range header or the file's not on the server anymore.
-        if (_tmpFile.size() == 0 || badRangeHeader || fileNotFound) {
+        if (_tmpFile.exists() && (_tmpFile.size() == 0 || badRangeHeader || fileNotFound)) {
             _tmpFile.close();
             FileSystem::remove(_tmpFile.fileName());
             propagator()->_journal->setDownloadInfo(_item->_file, SyncJournalDb::DownloadInfo());
@@ -580,16 +633,19 @@ void PropagateDownloadFile::slotGetFinished()
             // As a precaution against bugs that cause our database and the
             // reality on the server to diverge, rediscover this folder on the
             // next sync run.
-            propagator()->_journal->avoidReadFromDbOnNextSync(_item->_file);
+            propagator()->_journal->schedulePathForRemoteDiscovery(_item->_file);
         }
 
+        QByteArray errorBody;
+        QString errorString = _item->_httpErrorCode >= 400 ? job->errorStringParsingBody(&errorBody)
+                                                           : job->errorString();
         SyncFileItem::Status status = job->errorStatus();
         if (status == SyncFileItem::NoStatus) {
             status = classifyError(err, _item->_httpErrorCode,
-                &propagator()->_anotherSyncNeeded);
+                &propagator()->_anotherSyncNeeded, errorBody);
         }
 
-        done(status, job->errorString());
+        done(status, errorString);
         return;
     }
 
@@ -603,7 +659,6 @@ void PropagateDownloadFile::slotGetFinished()
         // so make sure we have the up-to-date time
         _item->_modtime = job->lastModified();
     }
-    _item->_responseTimeStamp = job->responseTimestamp();
 
     _tmpFile.close();
     _tmpFile.flush();
@@ -613,14 +668,26 @@ void PropagateDownloadFile::slotGetFinished()
      * truncated, as described here: https://github.com/owncloud/mirall/issues/2528
      */
     const QByteArray sizeHeader("Content-Length");
-    quint64 bodySize = job->reply()->rawHeader(sizeHeader).toULongLong();
+    qint64 bodySize = job->reply()->rawHeader(sizeHeader).toLongLong();
+    bool hasSizeHeader = !job->reply()->rawHeader(sizeHeader).isEmpty();
 
-    if (!job->reply()->rawHeader(sizeHeader).isEmpty() && _tmpFile.size() > 0 && bodySize == 0) {
+    // Qt removes the content-length header for transparently decompressed HTTP1 replies
+    // but not for HTTP2 or SPDY replies. For these it remains and contains the size
+    // of the compressed data. See QTBUG-73364.
+    const auto contentEncoding = job->reply()->rawHeader("content-encoding").toLower();
+    if ((contentEncoding == "gzip" || contentEncoding == "deflate")
+        && (job->reply()->attribute(QNetworkRequest::HTTP2WasUsedAttribute).toBool()
+            || job->reply()->attribute(QNetworkRequest::SpdyWasUsedAttribute).toBool())) {
+        bodySize = 0;
+        hasSizeHeader = false;
+    }
+
+    if (hasSizeHeader && _tmpFile.size() > 0 && bodySize == 0) {
         // Strange bug with broken webserver or webfirewall https://github.com/owncloud/client/issues/3373#issuecomment-122672322
         // This happened when trying to resume a file. The Content-Range header was files, Content-Length was == 0
         qCDebug(lcPropagateDownload) << bodySize << _item->_size << _tmpFile.size() << job->resumeStart();
         FileSystem::remove(_tmpFile.fileName());
-        done(SyncFileItem::SoftError, QLatin1String("Broken webserver returning empty content length for non-empty file on resume"));
+        done(SyncFileItem::SoftError, QStringLiteral("Broken webserver returning empty content length for non-empty file on resume"));
         return;
     }
 
@@ -647,10 +714,11 @@ void PropagateDownloadFile::slotGetFinished()
     // the database yet!)
     if (job->reply()->rawHeader("OC-Conflict") == "1") {
         _conflictRecord.path = _item->_file.toUtf8();
+        _conflictRecord.initialBasePath = job->reply()->rawHeader("OC-ConflictInitialBasePath");
         _conflictRecord.baseFileId = job->reply()->rawHeader("OC-ConflictBaseFileId");
-        _conflictRecord.baseEtag = _job->reply()->rawHeader("OC-ConflictBaseEtag");
+        _conflictRecord.baseEtag = job->reply()->rawHeader("OC-ConflictBaseEtag");
 
-        auto mtimeHeader = _job->reply()->rawHeader("OC-ConflictBaseMtime");
+        auto mtimeHeader = job->reply()->rawHeader("OC-ConflictBaseMtime");
         if (!mtimeHeader.isEmpty())
             _conflictRecord.baseModtime = mtimeHeader.toLongLong();
 
@@ -683,7 +751,7 @@ void PropagateDownloadFile::slotChecksumFail(const QString &errMsg)
 
 void PropagateDownloadFile::deleteExistingFolder()
 {
-    QString existingDir = propagator()->getFilePath(_item->_file);
+    QString existingDir = propagator()->fullLocalPath(_item->_file);
     if (!QFileInfo(existingDir).isDir()) {
         return;
     }
@@ -708,14 +776,14 @@ namespace { // Anonymous namespace for the recall feature
     {
         QString recallFileName(fn);
         // Add _recall-XXXX  before the extension.
-        int dotLocation = recallFileName.lastIndexOf('.');
+        int dotLocation = recallFileName.lastIndexOf(QLatin1Char('.'));
         // If no extension, add it at the end  (take care of cases like foo/.hidden or foo.bar/file)
-        if (dotLocation <= recallFileName.lastIndexOf('/') + 1) {
+        if (dotLocation <= recallFileName.lastIndexOf(QLatin1Char('/')) + 1) {
             dotLocation = recallFileName.size();
         }
 
-        QString timeString = QDateTime::currentDateTimeUtc().toString("yyyyMMdd-hhmmss");
-        recallFileName.insert(dotLocation, "_.sys.admin#recall#-" + timeString);
+        QString timeString = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-hhmmss"));
+        recallFileName.insert(dotLocation, QStringLiteral("_.sys.admin#recall#-") + timeString);
 
         return recallFileName;
     }
@@ -738,7 +806,7 @@ namespace { // Anonymous namespace for the recall feature
             QByteArray line = file.readLine();
             line.chop(1); // remove trailing \n
 
-            QString recalledFile = QDir::cleanPath(baseDir.filePath(line));
+            QString recalledFile = QDir::cleanPath(baseDir.filePath(QString::fromUtf8(line)));
             if (!recalledFile.startsWith(folderPath) || !recalledFile.startsWith(baseDir.path())) {
                 qCWarning(lcPropagateDownload) << "Ignoring recall of " << recalledFile;
                 continue;
@@ -767,7 +835,9 @@ namespace { // Anonymous namespace for the recall feature
     static void preserveGroupOwnership(const QString &fileName, const QFileInfo &fi)
     {
 #ifdef Q_OS_UNIX
-        chown(fileName.toLocal8Bit().constData(), -1, fi.groupId());
+        if (chown(fileName.toLocal8Bit().constData(), -1, fi.groupId()) != 0) {
+            qCWarning(lcPropagateDownload) << "Unable to chown" << fileName << "to previous group owner" << strerror(errno);
+        }
 #else
         Q_UNUSED(fileName);
         Q_UNUSED(fi);
@@ -777,7 +847,7 @@ namespace { // Anonymous namespace for the recall feature
 
 void PropagateDownloadFile::transmissionChecksumValidated(const QByteArray &checksumType, const QByteArray &checksum)
 {
-    const auto theContentChecksumType = contentChecksumType();
+    const QByteArray theContentChecksumType = propagator()->account()->capabilities().preferredUploadChecksumType();
 
     // Reuse transmission checksum as content checksum.
     //
@@ -805,7 +875,8 @@ void PropagateDownloadFile::contentChecksumComputed(const QByteArray &checksumTy
 
 void PropagateDownloadFile::downloadFinished()
 {
-    QString fn = propagator()->getFilePath(_item->_file);
+    OC_ASSERT(!_tmpFile.isOpen());
+    QString fn = propagator()->fullLocalPath(_item->_file);
 
     // In case of file name clash, report an error
     // This can happen if another parallel download saved a clashing file.
@@ -813,6 +884,27 @@ void PropagateDownloadFile::downloadFinished()
         done(SyncFileItem::NormalError, tr("File %1 cannot be saved because of a local file name clash!").arg(QDir::toNativeSeparators(_item->_file)));
         return;
     }
+
+    FileSystem::setModTime(_tmpFile.fileName(), _item->_modtime);
+    // We need to fetch the time again because some file systems such as FAT have worse than a second
+    // Accuracy, and we really need the time from the file system. (#3103)
+    _item->_modtime = FileSystem::getModTime(_tmpFile.fileName());
+
+    bool previousFileExists = FileSystem::fileExists(fn);
+    if (previousFileExists) {
+        // Preserve the existing file permissions.
+        QFileInfo existingFile(fn);
+        if (existingFile.permissions() != _tmpFile.permissions()) {
+            _tmpFile.setPermissions(existingFile.permissions());
+        }
+        preserveGroupOwnership(_tmpFile.fileName(), existingFile);
+
+        // Make the file a hydrated placeholder if possible
+        propagator()->syncOptions()._vfs->convertToPlaceholder(_tmpFile.fileName(), *_item, fn);
+    }
+
+    // Apply the remote permissions
+    FileSystem::setFileReadOnlyWeak(_tmpFile.fileName(), !_item->_remotePerm.isNull() && !_item->_remotePerm.hasPermission(RemotePermissions::CanWrite));
 
     bool isConflict = _item->_instruction == CSYNC_INSTRUCTION_CONFLICT
         && (QFileInfo(fn).isDir() || !FileSystem::fileEquals(fn, _tmpFile.fileName()));
@@ -822,21 +914,10 @@ void PropagateDownloadFile::downloadFinished()
             done(SyncFileItem::SoftError, error);
             return;
         }
+        previousFileExists = false;
     }
 
-    FileSystem::setModTime(_tmpFile.fileName(), _item->_modtime);
-    // We need to fetch the time again because some file systems such as FAT have worse than a second
-    // Accuracy, and we really need the time from the file system. (#3103)
-    _item->_modtime = FileSystem::getModTime(_tmpFile.fileName());
-
-    if (FileSystem::fileExists(fn)) {
-        // Preserve the existing file permissions.
-        QFileInfo existingFile(fn);
-        if (existingFile.permissions() != _tmpFile.permissions()) {
-            _tmpFile.setPermissions(existingFile.permissions());
-        }
-        preserveGroupOwnership(_tmpFile.fileName(), existingFile);
-
+    if (previousFileExists) {
         // Check whether the existing file has changed since the discovery
         // phase by comparing size and mtime to the previous values. This
         // is necessary to avoid overwriting user changes that happened between
@@ -850,27 +931,11 @@ void PropagateDownloadFile::downloadFinished()
         }
     }
 
-    // Apply the remote permissions
-    FileSystem::setFileReadOnlyWeak(_tmpFile.fileName(), !_item->_remotePerm.isNull() && !_item->_remotePerm.hasPermission(RemotePermissions::CanWrite));
-
     QString error;
     emit propagator()->touchedFile(fn);
     // The fileChanged() check is done above to generate better error messages.
     if (!FileSystem::uncheckedRenameReplace(_tmpFile.fileName(), fn, &error)) {
-        qCWarning(lcPropagateDownload) << QString("Rename failed: %1 => %2").arg(_tmpFile.fileName()).arg(fn);
-
-        // If we moved away the original file due to a conflict but can't
-        // put the downloaded file in its place, we are in a bad spot:
-        // If we do nothing the next sync run will assume the user deleted
-        // the file!
-        // To avoid that, the file is removed from the metadata table entirely
-        // which makes it look like we're just about to initially download
-        // it.
-        if (isConflict) {
-            propagator()->_journal->deleteFileRecord(fn);
-            propagator()->_journal->commit("download finished");
-        }
-
+        qCWarning(lcPropagateDownload) << QStringLiteral("Rename failed: %1 => %2").arg(_tmpFile.fileName()).arg(fn);
         // If the file is locked, we want to retry this sync when it
         // becomes available again, otherwise try again directly
         if (FileSystem::isFileLocked(fn)) {
@@ -882,6 +947,7 @@ void PropagateDownloadFile::downloadFinished()
         done(SyncFileItem::SoftError, error);
         return;
     }
+
     FileSystem::setFileHidden(fn, false);
 
     // Maybe we downloaded a newer version of the file than we thought we would...
@@ -893,26 +959,52 @@ void PropagateDownloadFile::downloadFinished()
     if (_conflictRecord.isValid())
         propagator()->_journal->setConflictRecord(_conflictRecord);
 
+    auto vfs = propagator()->syncOptions()._vfs;
+    if (vfs && vfs->mode() == Vfs::WithSuffix) {
+        // If the virtual file used to have a different name and db
+        // entry, remove it transfer its old pin state.
+        if (_item->_type == ItemTypeVirtualFileDownload) {
+            QString virtualFile = _item->_file + vfs->fileSuffix();
+            auto fn = propagator()->fullLocalPath(virtualFile);
+            qCDebug(lcPropagateDownload) << "Download of previous virtual file finished" << fn;
+            QFile::remove(fn);
+            propagator()->_journal->deleteFileRecord(virtualFile);
+
+            // Move the pin state to the new location
+            auto pin = propagator()->_journal->internalPinStates().rawForPath(virtualFile.toUtf8());
+            if (pin && *pin != PinState::Inherited) {
+                vfs->setPinState(_item->_file, *pin);
+                vfs->setPinState(virtualFile, PinState::Inherited);
+            }
+        }
+
+        // Ensure the pin state isn't contradictory
+        auto pin = vfs->pinState(_item->_file);
+        if (pin && *pin == PinState::OnlineOnly)
+            vfs->setPinState(_item->_file, PinState::Unspecified);
+    }
+
     updateMetadata(isConflict);
 }
 
 void PropagateDownloadFile::updateMetadata(bool isConflict)
 {
-    QString fn = propagator()->getFilePath(_item->_file);
+    QString fn = propagator()->fullLocalPath(_item->_file);
 
-    if (!propagator()->_journal->setFileRecord(_item->toSyncJournalFileRecordWithInode(fn))) {
+    if (!propagator()->updateMetadata(*_item)) {
         done(SyncFileItem::FatalError, tr("Error writing metadata to the database"));
         return;
     }
     propagator()->_journal->setDownloadInfo(_item->_file, SyncJournalDb::DownloadInfo());
-    propagator()->_journal->commit("download file start2");
+    propagator()->_journal->commit(QStringLiteral("download file start2"));
+
     done(isConflict ? SyncFileItem::Conflict : SyncFileItem::Success);
 
     // handle the special recall file
     if (!_item->_remotePerm.hasPermission(RemotePermissions::IsShared)
         && (_item->_file == QLatin1String(".sys.admin#recall#")
-               || _item->_file.endsWith("/.sys.admin#recall#"))) {
-        handleRecallFile(fn, propagator()->_localDir, *propagator()->_journal);
+               || _item->_file.endsWith(QLatin1String("/.sys.admin#recall#")))) {
+        handleRecallFile(fn, propagator()->localPath(), *propagator()->_journal);
     }
 
     qint64 duration = _stopwatch.elapsed();
@@ -926,6 +1018,7 @@ void PropagateDownloadFile::slotDownloadProgress(qint64 received, qint64)
     if (!_job)
         return;
     _downloadProgress = received;
+
     propagator()->reportProgress(*_item, _resumeStart + received);
 }
 

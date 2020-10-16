@@ -57,7 +57,7 @@ class Application : public SharedTools::QtSingleApplication
     Q_OBJECT
 public:
     explicit Application(int &argc, char **argv);
-    ~Application();
+    ~Application() override;
 
     bool giveHelp();
     void showHelp();
@@ -68,15 +68,28 @@ public:
 
     void showSettingsDialog();
 
+    ownCloudGui *gui() const;
+
 public slots:
     // TODO: this should not be public
     void slotownCloudWizardDone(int);
     void slotCrash();
+    void slotCrashEnforce();
+    void slotCrashFatal();
+    /**
+     * Will download a virtual file, and open the result.
+     * The argument is the filename of the virtual file (including the extension)
+     */
+    void openVirtualFile(const QString &filename);
+
+    /// Attempt to show() the tray icon again. Used if no systray was available initially.
+    void tryTrayAgain();
 
 protected:
     void parseOptions(const QStringList &);
     void setupTranslations();
     void setupLogging();
+    bool event(QEvent *event) override;
 
 signals:
     void folderRemoved();
@@ -94,6 +107,12 @@ protected slots:
 private:
     void setHelp();
 
+    /**
+     * Maybe a newer version of the client was used with this config file:
+     * if so, backup, confirm with user and remove the config that can't be read.
+     */
+    bool configVersionMigration();
+
     QPointer<ownCloudGui> _gui;
 
     Theme *_theme;
@@ -101,13 +120,18 @@ private:
     bool _helpOnly;
     bool _versionOnly;
 
+
+#ifdef Q_OS_LINUX
     QElapsedTimer _startedAt;
+#endif
 
     // options from command line:
     bool _showLogWindow;
+    bool _showSettings = false;
+    bool _quitInstance = false;
     QString _logFile;
     QString _logDir;
-    int _logExpire;
+    std::chrono::hours _logExpire;
     bool _logFlush;
     bool _logDebug;
     bool _userTriggeredConnect;
@@ -123,6 +147,13 @@ private:
 #endif
     QScopedPointer<FolderMan> _folderManager;
 };
+
+inline Application *ocApp()
+{
+    auto instance = qobject_cast<Application *>(qApp);
+    OC_ENFORCE(instance);
+    return instance;
+}
 
 } // namespace OCC
 

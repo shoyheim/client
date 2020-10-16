@@ -99,9 +99,11 @@ public:
         UpdateOnlyAvailableThroughSystem };
     explicit OCUpdater(const QUrl &url);
 
+    void setUpdateUrl(const QUrl &url);
+
     bool performUpdate();
 
-    void checkForUpdate() Q_DECL_OVERRIDE;
+    void checkForUpdate() override;
 
     QString statusString() const;
     int downloadState() const;
@@ -113,13 +115,14 @@ signals:
     void requestRestart();
 
 public slots:
+    // FIXME Maybe this should be in the NSISUpdater which should have been called WindowsUpdater
     void slotStartInstaller();
 
 protected slots:
-    void backgroundCheckForUpdate() Q_DECL_OVERRIDE;
+    void backgroundCheckForUpdate() override;
+    void slotOpenUpdateUrl();
 
 private slots:
-    void slotOpenUpdateUrl();
     void slotVersionInfoArrived();
     void slotTimedOut();
 
@@ -145,23 +148,20 @@ class NSISUpdater : public OCUpdater
 {
     Q_OBJECT
 public:
-    enum UpdateState { NoUpdate = 0,
-        UpdateAvailable,
-        UpdateFailed };
     explicit NSISUpdater(const QUrl &url);
-    bool handleStartup() Q_DECL_OVERRIDE;
+    bool handleStartup() override;
 private slots:
     void slotSetSeenVersion();
     void slotDownloadFinished();
     void slotWriteFile();
 
 private:
-    NSISUpdater::UpdateState updateStateOnStart();
-    void showDialog(const UpdateInfo &info);
-    void versionInfoArrived(const UpdateInfo &info) Q_DECL_OVERRIDE;
+    void wipeUpdateData();
+    void showNoUrlDialog(const UpdateInfo &info);
+    void showUpdateErrorDialog(const QString &targetVersion);
+    void versionInfoArrived(const UpdateInfo &info) override;
     QScopedPointer<QTemporaryFile> _file;
     QString _targetFile;
-    bool _showFallbackMessage;
 };
 
 /**
@@ -176,11 +176,11 @@ class PassiveUpdateNotifier : public OCUpdater
     Q_OBJECT
 public:
     explicit PassiveUpdateNotifier(const QUrl &url);
-    bool handleStartup() Q_DECL_OVERRIDE { return false; }
-    void backgroundCheckForUpdate() Q_DECL_OVERRIDE;
+    bool handleStartup() override { return false; }
+    void backgroundCheckForUpdate() override;
 
 private:
-    void versionInfoArrived(const UpdateInfo &info) Q_DECL_OVERRIDE;
+    void versionInfoArrived(const UpdateInfo &info) override;
     QByteArray _runningAppVersion;
 };
 }

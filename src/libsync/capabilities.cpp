@@ -22,68 +22,91 @@ namespace OCC {
 
 Capabilities::Capabilities(const QVariantMap &capabilities)
     : _capabilities(capabilities)
+    , _fileSharingCapabilities(_capabilities.value(QStringLiteral("files_sharing")).toMap())
+    , _fileSharingPublicCapabilities(_fileSharingCapabilities.value(QStringLiteral("public"), {}).toMap())
+    , _tusSupport(_capabilities.value(QStringLiteral("files")).toMap().value(QStringLiteral("tus_support")).toMap())
 {
 }
 
 bool Capabilities::shareAPI() const
 {
-    if (_capabilities["files_sharing"].toMap().contains("api_enabled")) {
-        return _capabilities["files_sharing"].toMap()["api_enabled"].toBool();
-    } else {
-        // This was later added so if it is not present just assume the API is enabled.
-        return true;
-    }
+    // This was later added so if it is not present just assume the API is enabled.
+    return _fileSharingCapabilities.value(QStringLiteral("api_enabled"), true).toBool();
 }
 
 bool Capabilities::sharePublicLink() const
 {
-    if (_capabilities["files_sharing"].toMap().contains("public")) {
-        return shareAPI() && _capabilities["files_sharing"].toMap()["public"].toMap()["enabled"].toBool();
-    } else {
-        // This was later added so if it is not present just assume that link sharing is enabled.
-        return true;
-    }
+    // This was later added so if it is not present just assume that link sharing is enabled.
+    return shareAPI() && _fileSharingPublicCapabilities.value(QStringLiteral("enabled"), true).toBool();
 }
 
 bool Capabilities::sharePublicLinkAllowUpload() const
 {
-    return _capabilities["files_sharing"].toMap()["public"].toMap()["upload"].toBool();
+    return _fileSharingPublicCapabilities.value(QStringLiteral("upload")).toBool();
 }
 
 bool Capabilities::sharePublicLinkSupportsUploadOnly() const
 {
-    return _capabilities["files_sharing"].toMap()["public"].toMap()["supports_upload_only"].toBool();
+    return _fileSharingPublicCapabilities.value(QStringLiteral("supports_upload_only")).toBool();
 }
 
-bool Capabilities::sharePublicLinkEnforcePassword() const
+static bool getEnforcePasswordCapability(const QVariantMap &fileSharingPublicCapabilities, const QString &name)
 {
-    return _capabilities["files_sharing"].toMap()["public"].toMap()["password"].toMap()["enforced"].toBool();
+    auto value = fileSharingPublicCapabilities[QStringLiteral("password")].toMap()[QStringLiteral("enforced_for")].toMap()[name];
+    if (!value.isValid())
+        return fileSharingPublicCapabilities[QStringLiteral("password")].toMap()[QStringLiteral("enforced")].toBool();
+    return value.toBool();
+}
+
+bool Capabilities::sharePublicLinkEnforcePasswordForReadOnly() const
+{
+    return getEnforcePasswordCapability(_fileSharingPublicCapabilities, QStringLiteral("read_only"));
+}
+
+bool Capabilities::sharePublicLinkEnforcePasswordForReadWrite() const
+{
+    return getEnforcePasswordCapability(_fileSharingPublicCapabilities, QStringLiteral("read_write"));
+}
+
+bool Capabilities::sharePublicLinkEnforcePasswordForUploadOnly() const
+{
+    return getEnforcePasswordCapability(_fileSharingPublicCapabilities, QStringLiteral("upload_only"));
+}
+
+bool Capabilities::sharePublicLinkDefaultExpire() const
+{
+    return _fileSharingPublicCapabilities.value(QStringLiteral("expire_date")).toMap().value(QStringLiteral("enabled")).toBool();
+}
+
+int Capabilities::sharePublicLinkDefaultExpireDateDays() const
+{
+    return _fileSharingPublicCapabilities.value(QStringLiteral("expire_date")).toMap().value(QStringLiteral("days")).toInt();
 }
 
 bool Capabilities::sharePublicLinkEnforceExpireDate() const
 {
-    return _capabilities["files_sharing"].toMap()["public"].toMap()["expire_date"].toMap()["enforced"].toBool();
-}
-
-int Capabilities::sharePublicLinkExpireDateDays() const
-{
-    return _capabilities["files_sharing"].toMap()["public"].toMap()["expire_date"].toMap()["days"].toInt();
+    return _fileSharingPublicCapabilities.value(QStringLiteral("expire_date")).toMap().value(QStringLiteral("enforced")).toBool();
 }
 
 bool Capabilities::sharePublicLinkMultiple() const
 {
-    return _capabilities["files_sharing"].toMap()["public"].toMap()["multiple"].toBool();
+    return _fileSharingPublicCapabilities.value(QStringLiteral("multiple")).toBool();
 }
 
 bool Capabilities::shareResharing() const
 {
-    return _capabilities["files_sharing"].toMap()["resharing"].toBool();
+    return _fileSharingCapabilities.value(QStringLiteral("resharing")).toBool();
+}
+
+int Capabilities::defaultPermissions() const
+{
+    return _fileSharingCapabilities.value(QStringLiteral("default_permissions"), 1).toInt();
 }
 
 bool Capabilities::notificationsAvailable() const
 {
     // We require the OCS style API in 9.x, can't deal with the REST one only found in 8.2
-    return _capabilities.contains("notifications") && _capabilities["notifications"].toMap().contains("ocs-endpoints");
+    return _capabilities.contains(QStringLiteral("notifications")) && _capabilities.value(QStringLiteral("notifications")).toMap().contains(QStringLiteral("ocs-endpoints"));
 }
 
 bool Capabilities::isValid() const
@@ -94,7 +117,7 @@ bool Capabilities::isValid() const
 QList<QByteArray> Capabilities::supportedChecksumTypes() const
 {
     QList<QByteArray> list;
-    foreach (const auto &t, _capabilities["checksums"].toMap()["supportedTypes"].toList()) {
+    foreach (const auto &t, _capabilities.value(QStringLiteral("checksums")).toMap().value(QStringLiteral("supportedTypes")).toList()) {
         list.push_back(t.toByteArray());
     }
     return list;
@@ -102,7 +125,9 @@ QList<QByteArray> Capabilities::supportedChecksumTypes() const
 
 QByteArray Capabilities::preferredUploadChecksumType() const
 {
-    return _capabilities["checksums"].toMap()["preferredUploadType"].toByteArray();
+    return qEnvironmentVariable("OWNCLOUD_CONTENT_CHECKSUM_TYPE",
+                                _capabilities.value(QStringLiteral("checksums")).toMap()
+                                .value(QStringLiteral("preferredUploadType"), QStringLiteral("SHA1")).toString()).toUtf8();
 }
 
 QByteArray Capabilities::uploadChecksumType() const
@@ -118,28 +143,53 @@ QByteArray Capabilities::uploadChecksumType() const
 
 bool Capabilities::chunkingNg() const
 {
+    if (!bigfilechunkingEnabled())
+    {
+        return false;
+    }
     static const auto chunkng = qgetenv("OWNCLOUD_CHUNKING_NG");
     if (chunkng == "0")
         return false;
     if (chunkng == "1")
         return true;
-    return _capabilities["dav"].toMap()["chunking"].toByteArray() >= "1.0";
+    return _capabilities.value(QStringLiteral("dav")).toMap().value(QStringLiteral("chunking")).toByteArray() >= "1.0";
+}
+
+bool Capabilities::bigfilechunkingEnabled() const
+{
+    bool ok;
+    const int chunkSize = qEnvironmentVariableIntValue("OWNCLOUD_CHUNK_SIZE", &ok);
+    if (ok && chunkSize == 0)
+    {
+        return false;
+    }
+    return _capabilities.value(QStringLiteral("files")).toMap().value(QStringLiteral("bigfilechunking"), true).toBool();
+}
+
+const TusSupport &Capabilities::tusSupport() const
+{
+    return _tusSupport;
 }
 
 bool Capabilities::chunkingParallelUploadDisabled() const
 {
-    return _capabilities["dav"].toMap()["chunkingParallelUploadDisabled"].toBool();
+    return _capabilities.value(QStringLiteral("dav")).toMap().value(QStringLiteral("chunkingParallelUploadDisabled")).toBool();
 }
 
 bool Capabilities::privateLinkPropertyAvailable() const
 {
-    return _capabilities["files"].toMap()["privateLinks"].toBool();
+    return _capabilities.value(QStringLiteral("files")).toMap().value(QStringLiteral("privateLinks")).toBool();
+}
+
+bool Capabilities::privateLinkDetailsParamAvailable() const
+{
+    return _capabilities.value(QStringLiteral("files")).toMap().value(QStringLiteral("privateLinksDetailsParam")).toBool();
 }
 
 QList<int> Capabilities::httpErrorCodesThatResetFailingChunkedUploads() const
 {
     QList<int> list;
-    foreach (const auto &t, _capabilities["dav"].toMap()["httpErrorCodesThatResetFailingChunkedUploads"].toList()) {
+    foreach (const auto &t, _capabilities.value(QStringLiteral("dav")).toMap().value(QStringLiteral("httpErrorCodesThatResetFailingChunkedUploads")).toList()) {
         list.push_back(t.toInt());
     }
     return list;
@@ -147,7 +197,7 @@ QList<int> Capabilities::httpErrorCodesThatResetFailingChunkedUploads() const
 
 QString Capabilities::invalidFilenameRegex() const
 {
-    return _capabilities["dav"].toMap()["invalidFilenameRegex"].toString();
+    return _capabilities[QStringLiteral("dav")].toMap()[QStringLiteral("invalidFilenameRegex")].toString();
 }
 
 bool Capabilities::uploadConflictFiles() const
@@ -157,6 +207,33 @@ bool Capabilities::uploadConflictFiles() const
     if (envIsSet)
         return envValue != 0;
 
-    return _capabilities["uploadConflictFiles"].toBool();
+    return _capabilities[QStringLiteral("uploadConflictFiles")].toBool();
+}
+
+bool Capabilities::versioningEnabled() const
+{
+    return _capabilities.value(QStringLiteral("files")).toMap().value(QStringLiteral("versioning")).toBool();
+}
+
+QStringList Capabilities::blacklistedFiles() const
+{
+    return _capabilities.value(QStringLiteral("files")).toMap().value(QStringLiteral("blacklisted_files")).toStringList();
+}
+
+TusSupport::TusSupport(const QVariantMap &tus_support)
+{
+    if (tus_support.isEmpty() || qEnvironmentVariableIsSet("OWNCLOUD_NO_TUS")) {
+        return;
+    }
+    version = QVersionNumber::fromString(tus_support.value(QStringLiteral("version")).toString());
+    resumable = QVersionNumber::fromString(tus_support.value(QStringLiteral("resumable")).toString());
+    extensions = tus_support.value(QStringLiteral("extension")).toString().split(QLatin1Char(','), QString::SkipEmptyParts);
+    max_chunk_size = tus_support.value(QStringLiteral("max_chunk_size")).value<quint64>();
+    http_method_override = tus_support.value(QStringLiteral("http_method_override")).toString();
+}
+
+bool TusSupport::isValid() const
+{
+    return !version.isNull();
 }
 }

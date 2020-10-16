@@ -16,10 +16,14 @@
 #include "config.h"
 #include "common/utility.h"
 #include "version.h"
+#include "configfile.h"
+#include "common/vfs.h"
 
 #include <QtCore>
 #ifndef TOKEN_AUTH_ONLY
 #include <QtGui>
+#include <QStyle>
+#include <QApplication>
 #endif
 #include <QSslSocket>
 
@@ -35,7 +39,7 @@
 
 namespace OCC {
 
-Theme *Theme::_instance = 0;
+Theme *Theme::_instance = nullptr;
 
 Theme *Theme::instance()
 {
@@ -92,25 +96,29 @@ QString Theme::statusHeaderText(SyncResult::Status status) const
 
 QString Theme::appNameGUI() const
 {
-    return APPLICATION_NAME;
+    return QStringLiteral(APPLICATION_NAME);
 }
 
 QString Theme::appName() const
 {
-    return APPLICATION_SHORTNAME;
+    return QStringLiteral(APPLICATION_SHORTNAME);
 }
 
 QString Theme::version() const
 {
-    return MIRALL_VERSION_STRING;
+    return QStringLiteral(MIRALL_VERSION_STRING);
+}
+
+QString Theme::configFileName() const
+{
+    return QStringLiteral(APPLICATION_EXECUTABLE ".cfg");
 }
 
 #ifndef TOKEN_AUTH_ONLY
 
-QIcon Theme::trayFolderIcon(const QString &backend) const
+QIcon Theme::applicationIcon() const
 {
-    Q_UNUSED(backend)
-    return applicationIcon();
+    return themeIcon(QStringLiteral(APPLICATION_ICON_NAME "-icon"));
 }
 
 /*
@@ -123,21 +131,20 @@ QIcon Theme::themeIcon(const QString &name, bool sysTray, bool sysTrayMenuVisibl
     if (sysTray) {
         flavor = systrayIconFlavor(_mono, sysTrayMenuVisible);
     } else {
-        flavor = QLatin1String("colored");
+        flavor = QStringLiteral("colored");
     }
 
-    QString key = name + "," + flavor;
+    QString key = name + QLatin1Char(',') + flavor;
     QIcon &cached = _iconCache[key]; // Take reference, this will also "set" the cache entry
     if (cached.isNull()) {
-        if (QIcon::hasThemeIcon(name)) {
+        if (appName() == QLatin1String("ownCloud") && QIcon::hasThemeIcon(name)) {
             // use from theme
             return cached = QIcon::fromTheme(name);
         }
 
-        QList<int> sizes;
-        sizes << 16 << 22 << 32 << 48 << 64 << 128 << 256;
+        const QList<int> sizes {16, 22, 32, 48, 64, 128, 256, 512, 1024};
         foreach (int size, sizes) {
-            QString pixmapName = QString::fromLatin1(":/client/theme/%1/%2-%3.png").arg(flavor).arg(name).arg(size);
+            QString pixmapName = QStringLiteral(":/client/theme/%1/%2-%3.png").arg(flavor).arg(name).arg(size);
             if (QFile::exists(pixmapName)) {
                 QPixmap px(pixmapName);
                 // HACK, get rid of it by supporting FDO icon themes, this is really just emulating ubuntu-mono
@@ -151,51 +158,25 @@ QIcon Theme::themeIcon(const QString &name, bool sysTray, bool sysTrayMenuVisibl
             }
         }
         if (cached.isNull()) {
-            foreach (int size, sizes) {
-                QString pixmapName = QString::fromLatin1(":/client/resources/%1-%2.png").arg(name).arg(size);
-                if (QFile::exists(pixmapName)) {
-                    cached.addFile(pixmapName);
-                }
+            QString pixmapName = QStringLiteral(":/client/resources/%1.svg").arg(name);
+            if (QFile::exists(pixmapName)) {
+                cached.addFile(pixmapName);
             }
         }
     }
 
 #ifdef Q_OS_MAC
-#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
     // This defines the icon as a template and enables automatic macOS color handling
     // See https://bugreports.qt.io/browse/QTBUG-42109
     cached.setIsMask(_mono && sysTray && !sysTrayMenuVisible);
 #endif
-#endif
 
     return cached;
 }
-
-QString Theme::hidpiFileName(const QString &fileName, QPaintDevice *dev)
-{
-    qreal devicePixelRatio = dev ? dev->devicePixelRatio() : qApp->primaryScreen()->devicePixelRatio();
-    if (devicePixelRatio <= 1.0) {
-        return fileName;
-    }
-    // try to find a 2x version
-
-
-    const int dotIndex = fileName.lastIndexOf(QLatin1Char('.'));
-    if (dotIndex != -1) {
-        QString at2xfileName = fileName;
-        at2xfileName.insert(dotIndex, QStringLiteral("@2x"));
-        if (QFile::exists(at2xfileName)) {
-            return at2xfileName;
-        }
-    }
-    return fileName;
-}
-
-
 #endif
 
 Theme::Theme()
-    : QObject(0)
+    : QObject(nullptr)
     , _mono(false)
 {
 }
@@ -214,7 +195,22 @@ bool Theme::multiAccount() const
 
 QString Theme::defaultServerFolder() const
 {
-    return QLatin1String("/");
+    return QStringLiteral("/");
+}
+
+QString Theme::helpUrl() const
+{
+    return QStringLiteral("https://doc.owncloud.org/desktop/%1.%2/").arg(MIRALL_VERSION_MAJOR).arg(MIRALL_VERSION_MINOR);
+}
+
+QString Theme::conflictHelpUrl() const
+{
+    auto baseUrl = helpUrl();
+    if (baseUrl.isEmpty())
+        return QString();
+    if (!baseUrl.endsWith(QLatin1Char('/')))
+        baseUrl.append(QLatin1Char('/'));
+    return baseUrl + QStringLiteral("conflicts.html");
 }
 
 QString Theme::overrideServerUrl() const
@@ -238,7 +234,7 @@ QString Theme::systrayIconFlavor(bool mono, bool sysTrayMenuVisible) const
     Q_UNUSED(sysTrayMenuVisible)
     QString flavor;
     if (mono) {
-        flavor = Utility::hasDarkSystray() ? QLatin1String("white") : QLatin1String("black");
+        flavor = Utility::hasDarkSystray() ? QStringLiteral("white") : QStringLiteral("black");
 
 #ifdef Q_OS_MAC
         if (sysTrayMenuVisible) {
@@ -246,7 +242,7 @@ QString Theme::systrayIconFlavor(bool mono, bool sysTrayMenuVisible) const
         }
 #endif
     } else {
-        flavor = QLatin1String("colored");
+        flavor = QStringLiteral("colored");
     }
     return flavor;
 }
@@ -264,13 +260,13 @@ bool Theme::systrayUseMonoIcons() const
 
 bool Theme::monoIconsAvailable() const
 {
-    QString themeDir = QString::fromLatin1(":/client/theme/%1/").arg(Theme::instance()->systrayIconFlavor(true));
+    QString themeDir = QStringLiteral(":/client/theme/%1/").arg(Theme::instance()->systrayIconFlavor(true));
     return QDir(themeDir).exists();
 }
 
 QString Theme::updateCheckUrl() const
 {
-    return QLatin1String("https://updates.owncloud.com/client/");
+    return QStringLiteral("https://updates.owncloud.com/client/");
 }
 
 qint64 Theme::newBigFolderSizeLimit() const
@@ -289,43 +285,86 @@ bool Theme::wizardHideFolderSizeLimitCheckbox() const
     return false;
 }
 
-QString Theme::gitSHA1() const
+QString Theme::gitSHA1(VersionFormat format) const
 {
-    QString devString;
 #ifdef GIT_SHA1
-    const QString githubPrefix(QLatin1String(
-        "https://github.com/owncloud/client/commit/"));
-    const QString gitSha1(QLatin1String(GIT_SHA1));
-    devString = QCoreApplication::translate("ownCloudTheme::about()",
-        "<p><small>Built from Git revision <a href=\"%1\">%2</a>"
-        " on %3, %4 using Qt %5, %6</small></p>")
-                    .arg(githubPrefix + gitSha1)
-                    .arg(gitSha1.left(6))
-                    .arg(__DATE__)
-                    .arg(__TIME__)
-                    .arg(qVersion())
-                    .arg(QSslSocket::sslLibraryVersionString());
+    const auto gitSha = QStringLiteral(GIT_SHA1);
+    const auto gitShahSort = gitSha.left(6);
+    if (!aboutShowCopyright()) {
+        return gitShahSort;
+    }
+    const auto gitUrl = QStringLiteral("https://github.com/owncloud/client/commit/%1").arg(gitSha);
+    switch (format) {
+    case Theme::VersionFormat::Plain:
+        return gitShahSort;
+    case Theme::VersionFormat::Url:
+        return gitUrl;
+    case Theme::VersionFormat::RichText:
+        return QStringLiteral("<a href=\"%1\">%3</a>").arg(gitUrl, gitShahSort);
+    }
 #endif
-    return devString;
+    return QString();
 }
+
+QString Theme::aboutVersions(Theme::VersionFormat format) const
+{
+    const QString br = format == Theme::VersionFormat::RichText ? QStringLiteral("<br>") : QStringLiteral("\n");
+    const QString qtVersion = QString::fromUtf8(qVersion());
+    const QString qtVersionString = (QLatin1String(QT_VERSION_STR) == qtVersion ? qtVersion : QCoreApplication::translate("ownCloudTheme::qtVer", "%1 (Built against Qt %1)").arg(qtVersion, QStringLiteral(QT_VERSION_STR)));
+    QString _version = version();
+    QString gitUrl;
+#ifdef GIT_SHA1
+    if (format != Theme::VersionFormat::Url) {
+        _version = QCoreApplication::translate("ownCloudTheme::versionWithSha", "%1 %2").arg(version(), gitSHA1(format));
+    } else {
+        gitUrl = gitSHA1(format) + br;
+    }
+#endif
+    return QCoreApplication::translate("ownCloudTheme::aboutVersions()",
+        "%1 %2 %3 %4%8"
+        "%9"
+        "Libraries Qt %5, %6%8"
+        "Using virtual files plugin: %7")
+        .arg(appName(),
+            _version,
+            QStringLiteral(__DATE__),
+            QStringLiteral(__TIME__),
+            qtVersionString,
+            QSslSocket::sslLibraryVersionString(),
+            Vfs::modeToString(bestAvailableVfsMode()),
+            br,
+            gitUrl);
+}
+
 
 QString Theme::about() const
 {
-    QString re;
-    re = tr("<p>Version %1. For more information please visit <a href='%2'>%3</a>.</p>")
-             .arg(MIRALL_VERSION_STRING)
-             .arg("http://" MIRALL_STRINGIFY(APPLICATION_DOMAIN))
-             .arg(MIRALL_STRINGIFY(APPLICATION_DOMAIN));
+    QString vendor = QStringLiteral(APPLICATION_VENDOR);
+    // Ideally, the vendor should be "ownCloud GmbH", but it cannot be changed without
+    // changing the location of the settings and other registery keys.
+    if (vendor == QLatin1String("ownCloud")) {
+        vendor = QStringLiteral("ownCloud GmbH");
+    }
+    return tr("<p>Version %1. For more information visit <a href=\"%2\">https://%3</a></p>"
+              "<p>For known issues and help, please visit: <a href=\"https://central.owncloud.org/c/desktop-client\">https://central.owncloud.org</a></p>"
+              "<p><small>By Klaas Freitag, Daniel Molkentin, Olivier Goffart, Markus Götz, "
+              " Jan-Christoph Borchardt, Thomas Müller, Dominik Schmidt, Michael Stingl, Hannah von Reth, and others.</small></p>"
+              "<p>Copyright ownCloud GmbH</p>"
+              "<p>Distributed by %4 and licensed under the GNU General Public License (GPL) Version 2.0.<br/>"
+              "%5 and the %5 logo are registered trademarks of %4 in the "
+              "United States, other countries, or both.</p>"
+              "<p><small>%6</small></p>")
+            .arg(Utility::escape(version()),
+                 Utility::escape(QStringLiteral("https://" MIRALL_STRINGIFY(APPLICATION_DOMAIN))),
+                 Utility::escape(QStringLiteral(MIRALL_STRINGIFY(APPLICATION_DOMAIN))),
+                 Utility::escape(vendor),
+                 Utility::escape(appNameGUI()),
+                 aboutVersions(Theme::VersionFormat::RichText));
+}
 
-    re += tr("<p>Copyright ownCloud GmbH</p>");
-    re += tr("<p>Distributed by %1 and licensed under the GNU General Public License (GPL) Version 2.0.<br/>"
-             "%2 and the %2 logo are registered trademarks of %1 in the "
-             "United States, other countries, or both.</p>")
-              .arg(APPLICATION_VENDOR)
-              .arg(APPLICATION_NAME);
-
-    re += gitSHA1();
-    return re;
+bool Theme::aboutShowCopyright() const
+{
+    return true;
 }
 
 #ifndef TOKEN_AUTH_ONLY
@@ -336,20 +375,20 @@ QVariant Theme::customMedia(CustomMediaType type)
 
     switch (type) {
     case oCSetupTop:
-        key = QLatin1String("oCSetupTop");
+        key = QStringLiteral("oCSetupTop");
         break;
     case oCSetupSide:
-        key = QLatin1String("oCSetupSide");
+        key = QStringLiteral("oCSetupSide");
         break;
     case oCSetupBottom:
-        key = QLatin1String("oCSetupBottom");
+        key = QStringLiteral("oCSetupBottom");
         break;
     case oCSetupResultTop:
-        key = QLatin1String("oCSetupResultTop");
+        key = QStringLiteral("oCSetupResultTop");
         break;
     }
 
-    QString imgPath = QString::fromLatin1(":/client/theme/colored/%1.png").arg(key);
+    QString imgPath = QStringLiteral(":/client/theme/colored/%1.png").arg(key);
     if (QFile::exists(imgPath)) {
         QPixmap pix(imgPath);
         if (pix.isNull()) {
@@ -370,28 +409,28 @@ QIcon Theme::syncStateIcon(SyncResult::Status status, bool sysTray, bool sysTray
     switch (status) {
     case SyncResult::Undefined:
         // this can happen if no sync connections are configured.
-        statusIcon = QLatin1String("state-information");
+        statusIcon = QStringLiteral("state-information");
         break;
     case SyncResult::NotYetStarted:
     case SyncResult::SyncRunning:
-        statusIcon = QLatin1String("state-sync");
+        statusIcon = QStringLiteral("state-sync");
         break;
     case SyncResult::SyncAbortRequested:
     case SyncResult::Paused:
-        statusIcon = QLatin1String("state-pause");
+        statusIcon = QStringLiteral("state-pause");
         break;
     case SyncResult::SyncPrepare:
     case SyncResult::Success:
-        statusIcon = QLatin1String("state-ok");
+        statusIcon = QStringLiteral("state-ok");
         break;
     case SyncResult::Problem:
-        statusIcon = QLatin1String("state-information");
+        statusIcon = QStringLiteral("state-information");
         break;
     case SyncResult::Error:
     case SyncResult::SetupError:
     // FIXME: Use state-problem once we have an icon.
     default:
-        statusIcon = QLatin1String("state-error");
+        statusIcon = QStringLiteral("state-error");
     }
 
     return themeIcon(statusIcon, sysTray, sysTrayMenuVisible);
@@ -417,44 +456,25 @@ QColor Theme::wizardHeaderBackgroundColor() const
     return QColor();
 }
 
-QPixmap Theme::wizardHeaderLogo() const
+QIcon Theme::wizardHeaderLogo() const
 {
-    return applicationIcon().pixmap(64);
+    return applicationIcon();
 }
 
-QPixmap Theme::wizardHeaderBanner() const
+QPixmap Theme::wizardHeaderBanner(const QSize &size) const
 {
-    QColor c = wizardHeaderBackgroundColor();
+    const QColor c = wizardHeaderBackgroundColor();
     if (!c.isValid())
         return QPixmap();
-
-    QSize size(750, 78);
-    if (auto screen = qApp->primaryScreen()) {
-        // Adjust the the size if there is a different DPI. (Issue #6156)
-        // Indeed, this size need to be big enough to for the banner height, and the wizard's width
-        auto ratio = screen->logicalDotsPerInch() / 96.;
-        if (ratio > 1.)
-            size *= ratio;
-    }
     QPixmap pix(size);
-    pix.fill(wizardHeaderBackgroundColor());
+    pix.fill(c);
     return pix;
 }
 #endif
 
-bool Theme::wizardSelectiveSyncDefaultNothing() const
-{
-    return false;
-}
-
 QString Theme::webDavPath() const
 {
-    return QLatin1String("remote.php/webdav/");
-}
-
-QString Theme::webDavPathNonShib() const
-{
-    return QLatin1String("remote.php/nonshib-webdav/");
+    return QStringLiteral("remote.php/webdav/");
 }
 
 bool Theme::linkSharing() const
@@ -500,33 +520,42 @@ QString Theme::wizardUrlHint() const
 
 QString Theme::quotaBaseFolder() const
 {
-    return QLatin1String("/");
+    return QStringLiteral("/");
 }
 
 QString Theme::oauthClientId() const
 {
-    return "xdXOt13JKxym1B1QcEncf2XDkLAexMBFwiT9j6EfhhHFJhs2KM9jbjTmf8JBXE69";
+    return QStringLiteral("xdXOt13JKxym1B1QcEncf2XDkLAexMBFwiT9j6EfhhHFJhs2KM9jbjTmf8JBXE69");
 }
 
 QString Theme::oauthClientSecret() const
 {
-    return "UBntmLjC2yYCeHwsyj73Uwo9TAaecAetRwMw0xYcvNL9yRdLSUi0hUAHfvCHFeFh";
+    return QStringLiteral("UBntmLjC2yYCeHwsyj73Uwo9TAaecAetRwMw0xYcvNL9yRdLSUi0hUAHfvCHFeFh");
+}
+
+QPair<QString, QString> Theme::oauthOverrideAuthUrl() const
+{
+    return {};
+}
+
+QString Theme::openIdConnectScopes() const
+{
+    return QStringLiteral("openid offline_access email profile");
 }
 
 QString Theme::versionSwitchOutput() const
 {
-    QString helpText;
-    QTextStream stream(&helpText);
-    stream << appName()
-           << QLatin1String(" version ")
-           << version() << endl;
-#ifdef GIT_SHA1
-    stream << "Git revision " << GIT_SHA1 << endl;
-#endif
-    stream << "Using Qt " << qVersion() << ", built against Qt " << QT_VERSION_STR << endl;
-    stream << "Using '" << QSslSocket::sslLibraryVersionString() << "'" << endl;
-    return helpText;
+    return aboutVersions(Theme::VersionFormat::Url);
 }
 
+bool Theme::showVirtualFilesOption() const
+{
+    return enableExperimentalFeatures();
+}
+
+bool Theme::enableExperimentalFeatures() const
+{
+    return ConfigFile().showExperimentalOptions();
+}
 
 } // end namespace client

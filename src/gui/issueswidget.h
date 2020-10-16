@@ -43,9 +43,8 @@ class IssuesWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit IssuesWidget(QWidget *parent = 0);
-    ~IssuesWidget();
-    QSize sizeHint() const { return ownCloudGui::settingsDialogSize(); }
+    explicit IssuesWidget(QWidget *parent = nullptr);
+    ~IssuesWidget() override;
 
     void storeSyncIssues(QTextStream &ts);
     void showFolderErrors(const QString &folderAlias);
@@ -57,8 +56,8 @@ public slots:
     void slotOpenFile(QTreeWidgetItem *item, int);
 
 protected:
-    void showEvent(QShowEvent *);
-    void hideEvent(QHideEvent *);
+    void showEvent(QShowEvent *) override;
+    void hideEvent(QHideEvent *) override;
 
 signals:
     void copyToClipboard();
@@ -77,7 +76,7 @@ private:
     QString currentFolderFilter() const;
     bool shouldBeVisible(QTreeWidgetItem *item, AccountState *filterAccount,
         const QString &filterFolderAlias) const;
-    void cleanItems(const QString &folder);
+    void cleanItems(const std::function<bool(QTreeWidgetItem *)> &shouldDelete);
     void addItem(QTreeWidgetItem *item);
 
     /// Add the special error widget for the category, if any
@@ -88,6 +87,9 @@ private:
 
     /// Each insert disables sorting, this timer reenables it
     QTimer _reenableSorting;
+
+    /// Optimization: keep track of all folder/paths pairs that have an associated issue
+    QSet<QPair<QString, QString>> _pathsWithIssues;
 
     Ui::IssuesWidget *_ui;
 };

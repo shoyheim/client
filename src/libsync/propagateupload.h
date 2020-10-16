@@ -20,11 +20,12 @@
 #include <QFile>
 #include <QElapsedTimer>
 
-
 namespace OCC {
 
 Q_DECLARE_LOGGING_CATEGORY(lcPutJob)
 Q_DECLARE_LOGGING_CATEGORY(lcPropagateUpload)
+Q_DECLARE_LOGGING_CATEGORY(lcPropagateUploadV1)
+Q_DECLARE_LOGGING_CATEGORY(lcPropagateUploadNG)
 
 class BandwidthManager;
 
@@ -36,19 +37,19 @@ class UploadDevice : public QIODevice
 {
     Q_OBJECT
 public:
-    UploadDevice(BandwidthManager *bwm);
-    ~UploadDevice();
+    UploadDevice(const QString &fileName, qint64 start, qint64 size, BandwidthManager *bwm);
+    ~UploadDevice() override;
 
-    /** Reads the data from the file and opens the device */
-    bool prepareAndOpen(const QString &fileName, qint64 start, qint64 size);
+    bool open(QIODevice::OpenMode mode) override;
+    void close() override;
 
-    qint64 writeData(const char *, qint64) Q_DECL_OVERRIDE;
-    qint64 readData(char *data, qint64 maxlen) Q_DECL_OVERRIDE;
-    bool atEnd() const Q_DECL_OVERRIDE;
-    qint64 size() const Q_DECL_OVERRIDE;
-    qint64 bytesAvailable() const Q_DECL_OVERRIDE;
-    bool isSequential() const Q_DECL_OVERRIDE;
-    bool seek(qint64 pos) Q_DECL_OVERRIDE;
+    qint64 writeData(const char *, qint64) override;
+    qint64 readData(char *data, qint64 maxlen) override;
+    bool atEnd() const override;
+    qint64 size() const override;
+    qint64 bytesAvailable() const override;
+    bool isSequential() const override;
+    bool seek(qint64 pos) override;
 
     void setBandwidthLimited(bool);
     bool isBandwidthLimited() { return _bandwidthLimited; }
@@ -59,10 +60,15 @@ public:
 signals:
 
 private:
-    // The file data
-    QByteArray _data;
-    // Position in the data
-    qint64 _read;
+    /// The local file to read data from
+    QFile _file;
+
+    /// Start of the file data to use
+    qint64 _start = 0;
+    /// Amount of file data after _start to use
+    qint64 _size = 0;
+    /// Position between _start and _start+_size
+    qint64 _read = 0;
 
     // Bandwidth manager related
     QPointer<BandwidthManager> _bandwidthManager;
@@ -91,43 +97,32 @@ private:
     QElapsedTimer _requestTimer;
 
 public:
-    // Takes ownership of the device
-    explicit PUTFileJob(AccountPtr account, const QString &path, QIODevice *device,
-        const QMap<QByteArray, QByteArray> &headers, int chunk, QObject *parent = 0)
+    explicit PUTFileJob(AccountPtr account, const QString &path, std::unique_ptr<QIODevice> device,
+        const QMap<QByteArray, QByteArray> &headers, int chunk, QObject *parent = nullptr)
         : AbstractNetworkJob(account, path, parent)
-        , _device(device)
+        , _device(device.release())
         , _headers(headers)
         , _chunk(chunk)
     {
         _device->setParent(this);
     }
-    explicit PUTFileJob(AccountPtr account, const QUrl &url, QIODevice *device,
-        const QMap<QByteArray, QByteArray> &headers, int chunk, QObject *parent = 0)
+    explicit PUTFileJob(AccountPtr account, const QUrl &url, std::unique_ptr<QIODevice> device,
+        const QMap<QByteArray, QByteArray> &headers, int chunk, QObject *parent = nullptr)
         : AbstractNetworkJob(account, QString(), parent)
-        , _device(device)
+        , _device(device.release())
         , _headers(headers)
         , _url(url)
         , _chunk(chunk)
     {
         _device->setParent(this);
     }
-    ~PUTFileJob();
+    ~PUTFileJob() override;
 
     int _chunk;
 
-    virtual void start() Q_DECL_OVERRIDE;
+    void start() override;
 
-    virtual bool finished() Q_DECL_OVERRIDE
-    {
-        qCInfo(lcPutJob) << "PUT of" << reply()->request().url().toString() << "FINISHED WITH STATUS"
-                         << reply()->error()
-                         << (reply()->error() == QNetworkReply::NoError ? QLatin1String("") : errorString())
-                         << reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute)
-                         << reply()->attribute(QNetworkRequest::HttpReasonPhraseAttribute);
-
-        emit finishedSignal();
-        return true;
-    }
+    bool finished() override;
 
     QIODevice *device()
     {
@@ -153,8 +148,8 @@ signals:
 /**
  * @brief This job implements the asynchronous PUT
  *
- * If the server replies to a PUT with a OC-Finish-Poll url, we will query this url until the server
- * replies with an etag. https://github.com/owncloud/core/issues/12097
+ * If the server replies to a PUT with a OC-JobStatus-Location path, we will query this url until the server
+ * replies with an etag.
  * @ingroup libsync
  */
 class PollJob : public AbstractNetworkJob
@@ -175,8 +170,8 @@ public:
     {
     }
 
-    void start() Q_DECL_OVERRIDE;
-    bool finished() Q_DECL_OVERRIDE;
+    void start() override;
+    bool finished() override;
 
 signals:
     void finishedSignal();
@@ -210,7 +205,14 @@ protected:
     QVector<AbstractNetworkJob *> _jobs; /// network jobs that are currently in transit
     bool _finished BITFIELD(1); /// Tells that all the jobs have been finished
     bool _deleteExisting BITFIELD(1);
-    quint64 _abortCount; /// Keep track of number of aborted items
+
+    /** Whether an abort is currently ongoing.
+     *
+     * Important to avoid duplicate aborts since each finishing PUTFileJob might
+     * trigger an abort on error.
+     */
+    bool _aborting BITFIELD(1);
+
     QByteArray _transmissionChecksumHeader;
 
 public:
@@ -218,7 +220,7 @@ public:
         : PropagateItemJob(propagator, item)
         , _finished(false)
         , _deleteExisting(false)
-        , _abortCount(0)
+        , _aborting(false)
     {
     }
 
@@ -230,9 +232,9 @@ public:
      */
     void setDeleteExisting(bool enabled);
 
-    void start() Q_DECL_OVERRIDE;
+    void start() override;
 
-    bool isLikelyFinishedQuickly() Q_DECL_OVERRIDE { return _item->_size < propagator()->smallFileSize(); }
+    bool isLikelyFinishedQuickly() override { return _item->_size < propagator()->smallFileSize(); }
 
 private slots:
     void slotComputeContentChecksum();
@@ -249,19 +251,21 @@ public:
     void abortWithError(SyncFileItem::Status status, const QString &error);
 
 public slots:
-    void abort(PropagatorJob::AbortType abortType) Q_DECL_OVERRIDE;
     void slotJobDestroyed(QObject *job);
 
 private slots:
-    void slotReplyAbortFinished();
     void slotPollFinished();
 
 protected:
+    void done(SyncFileItem::Status status, const QString &errorString = QString()) override;
+
     /**
-     * Prepares the abort e.g. connects proper signals and slots
-     * to the subjobs to abort asynchronously
+     * Aborts all running network jobs, except for the ones that mayAbortJob
+     * returns false on and, for async aborts, emits abortFinished when done.
      */
-    void prepareAbort(PropagatorJob::AbortType abortType);
+    void abortNetworkJobs(
+        AbortType abortType,
+        const std::function<bool(AbstractNetworkJob *job)> &mayAbortJob);
 
     /**
      * Checks whether the current error is one that should reset the whole
@@ -275,7 +279,18 @@ protected:
      */
     void commonErrorHandling(AbstractNetworkJob *job);
 
-    // Bases headers that need to be sent with every chunk
+    /**
+     * Increases the timeout for the final MOVE/PUT for large files.
+     *
+     * This is an unfortunate workaround since the drawback is not being able to
+     * detect real disconnects in a timely manner. Shall go away when the server
+     * response starts coming quicker, or there is some sort of async api.
+     *
+     * See #6527, enterprise#2480
+     */
+    static void adjustLastJobTimeout(AbstractNetworkJob *job, qint64 fileSize);
+
+    /** Bases headers that need to be sent on the PUT, or in the MOVE for chunking-ng */
     QMap<QByteArray, QByteArray> headers();
 };
 
@@ -303,9 +318,9 @@ private:
      */
     int _currentChunk = 0;
     int _chunkCount = 0; /// Total number of chunks for this file
-    int _transferId = 0; /// transfer id (part of the url)
+    uint _transferId = 0; /// transfer id (part of the url)
 
-    quint64 chunkSize() const {
+    qint64 chunkSize() const {
         // Old chunking does not use dynamic chunking algorithm, and does not adjusts the chunk size respectively,
         // thus this value should be used as the one classifing item to be chunked
         return propagator()->syncOptions()._initialChunkSize;
@@ -317,9 +332,9 @@ public:
     {
     }
 
-    void doStartUpload() Q_DECL_OVERRIDE;
+    void doStartUpload() override;
 public slots:
-    void abort(PropagatorJob::AbortType abortType) Q_DECL_OVERRIDE;
+    void abort(PropagatorJob::AbortType abortType) override;
 private slots:
     void startNextChunk();
     void slotPutFinished();
@@ -336,40 +351,76 @@ class PropagateUploadFileNG : public PropagateUploadFileCommon
 {
     Q_OBJECT
 private:
-    quint64 _sent = 0; /// amount of data (bytes) that was already sent
+    /** Amount of data that was already sent in bytes.
+     *
+     * If this job is resuming an upload, this number includes bytes that were
+     * sent in previous jobs.
+     */
+    qint64 _sent = 0;
+
+    /** Amount of data that needs to be sent to the server in bytes.
+     *
+     * For normal uploads this will be the file size.
+     *
+     * This value is intended to be comparable to _sent: it's always the total
+     * amount of data that needs to be present at the server to finish the upload -
+     * regardless of whether previous jobs have already sent something.
+     */
+    qint64 _bytesToUpload;
+
     uint _transferId = 0; /// transfer id (part of the url)
-    int _currentChunk = 0; /// Id of the next chunk that will be sent
-    quint64 _currentChunkSize = 0; /// current chunk size
-    bool _removeJobError = false; /// If not null, there was an error removing the job
+    qint64 _currentChunkOffset = 0; /// byte offset of the next chunk data that will be sent
+    qint64 _currentChunkSize = 0; /// current chunk size
+    bool _removeJobError = false; /// if not null, there was an error removing the job
 
     // Map chunk number with its size  from the PROPFIND on resume.
     // (Only used from slotPropfindIterate/slotPropfindFinished because the LsColJob use signals to report data.)
     struct ServerChunkInfo
     {
-        quint64 size;
+        qint64 size;
         QString originalName;
     };
-    QMap<int, ServerChunkInfo> _serverChunks;
+    QMap<qint64, ServerChunkInfo> _serverChunks;
+
+    // Vector with expected PUT ranges.
+    struct UploadRangeInfo
+    {
+        qint64 start;
+        qint64 size;
+        qint64 end() const { return start + size; }
+    };
+    QVector<UploadRangeInfo> _rangesToUpload;
 
     /**
      * Return the URL of a chunk.
-     * If chunk == -1, returns the URL of the parent folder containing the chunks
+     * If chunkOffset == -1, returns the URL of the parent folder containing the chunks
      */
-    QUrl chunkUrl(int chunk = -1);
+    QUrl chunkUrl(qint64 chunkOffset = -1);
+
+    /**
+     * Finds the range starting at 'start' in _rangesToUpload and removes the first
+     * 'size' bytes from it. If it becomes empty, remove the range.
+     *
+     * Retuns false if no matching range was found.
+     */
+    bool markRangeAsDone(qint64 start, qint64 size);
 
 public:
     PropagateUploadFileNG(OwncloudPropagator *propagator, const SyncFileItemPtr &item)
         : PropagateUploadFileCommon(propagator, item)
+        , _bytesToUpload(item->_size)
     {
     }
 
-    void doStartUpload() Q_DECL_OVERRIDE;
+    void doStartUpload() override;
 
 private:
+    void doStartUploadNext();
     void startNewUpload();
     void startNextChunk();
+    void doFinalMove();
 public slots:
-    void abort(AbortType abortType) Q_DECL_OVERRIDE;
+    void abort(AbortType abortType) override;
 private slots:
     void slotPropfindFinished();
     void slotPropfindFinishedWithError();

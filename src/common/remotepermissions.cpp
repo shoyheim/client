@@ -21,13 +21,13 @@
 
 namespace OCC {
 
-static const char letters[] = " WDNVCKRSMm";
+static const char letters[] = " WDNVCKRSMmz";
 
 
 template <typename Char>
 void RemotePermissions::fromArray(const Char *p)
 {
-    _value = p ? notNullMask : 0;
+    _value = notNullMask;
     if (!p)
         return;
     while (*p) {
@@ -37,17 +37,7 @@ void RemotePermissions::fromArray(const Char *p)
     }
 }
 
-RemotePermissions::RemotePermissions(const char *p)
-{
-    fromArray(p);
-}
-
-RemotePermissions::RemotePermissions(const QString &s)
-{
-    fromArray(s.isEmpty() ? nullptr : s.utf16());
-}
-
-QByteArray RemotePermissions::toString() const
+QByteArray RemotePermissions::toDbValue() const
 {
     QByteArray result;
     if (isNull())
@@ -62,6 +52,27 @@ QByteArray RemotePermissions::toString() const
         result.append(' ');
     }
     return result;
+}
+
+QString RemotePermissions::toString() const
+{
+    return QString::fromUtf8(toDbValue());
+}
+
+RemotePermissions RemotePermissions::fromDbValue(const QByteArray &value)
+{
+    if (value.isEmpty())
+        return RemotePermissions();
+    RemotePermissions perm;
+    perm.fromArray(value.constData());
+    return perm;
+}
+
+RemotePermissions RemotePermissions::fromServerString(const QString &value)
+{
+    RemotePermissions perm;
+    perm.fromArray(value.utf16());
+    return perm;
 }
 
 } // namespace OCC

@@ -20,8 +20,31 @@
 
 #include <QVariantMap>
 #include <QStringList>
+#include <QVersionNumber>
 
 namespace OCC {
+
+
+struct TusSupport
+{
+    /**
+    <tus_support>
+    <version>1.0.0</version>
+    <resumable>1.0.0</resumable>
+    <extension>creation,creation-with-upload</extension>
+    <max_chunk_size>0</max_chunk_size>
+    <http_method_override/>
+    </tus_support>
+    */
+    TusSupport(const QVariantMap &tus_support);
+    QVersionNumber version;
+    QVersionNumber resumable;
+    QStringList extensions;
+    quint64 max_chunk_size;
+    QString http_method_override;
+
+    bool isValid() const;
+};
 
 /**
  * @brief The Capabilities class represents the capabilities of an ownCloud
@@ -37,18 +60,40 @@ public:
     bool sharePublicLink() const;
     bool sharePublicLinkAllowUpload() const;
     bool sharePublicLinkSupportsUploadOnly() const;
-    bool sharePublicLinkEnforcePassword() const;
+
+    /** Whether read-only link shares require a password.
+     *
+     * Returns sharePublicLinkEnforcePassword() if the fine-grained
+     * permission isn't available.
+     */
+    bool sharePublicLinkEnforcePasswordForReadOnly() const;
+    bool sharePublicLinkEnforcePasswordForReadWrite() const;
+    bool sharePublicLinkEnforcePasswordForUploadOnly() const;
+
+    bool sharePublicLinkDefaultExpire() const;
+    int sharePublicLinkDefaultExpireDateDays() const;
     bool sharePublicLinkEnforceExpireDate() const;
-    int sharePublicLinkExpireDateDays() const;
     bool sharePublicLinkMultiple() const;
     bool shareResharing() const;
+
+    // TODO: return SharePermission
+    int defaultPermissions() const;
+
     bool chunkingNg() const;
+
+    /// Wheter to use chunking
+    bool bigfilechunkingEnabled() const;
+
+    const TusSupport &tusSupport() const;
 
     /// disable parallel upload in chunking
     bool chunkingParallelUploadDisabled() const;
 
     /// Whether the "privatelink" DAV property is available
     bool privateLinkPropertyAvailable() const;
+
+    /// Whether the "privatelink" DAV property supports the 'details' param
+    bool privateLinkDetailsParamAvailable() const;
 
     /// returns true if the capabilities report notifications
     bool notificationsAvailable() const;
@@ -117,12 +162,23 @@ public:
     QString invalidFilenameRegex() const;
 
     /**
+     * return the list of filename that should not be uploaded
+     */
+    QStringList blacklistedFiles() const;
+
+    /**
      * Whether conflict files should remain local (default) or should be uploaded.
      */
     bool uploadConflictFiles() const;
 
+    /** Is versioning available? */
+    bool versioningEnabled() const;
+
 private:
     QVariantMap _capabilities;
+    QVariantMap _fileSharingCapabilities;
+    QVariantMap _fileSharingPublicCapabilities;
+    TusSupport _tusSupport;
 };
 }
 

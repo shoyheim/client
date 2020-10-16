@@ -21,9 +21,9 @@
 #include <QFile>
 #include <QTextStream>
 #include <qmutex.h>
+#include <chrono>
 
 #include "common/utility.h"
-#include "logger.h"
 #include "owncloudlib.h"
 
 namespace OCC {
@@ -43,10 +43,11 @@ class OWNCLOUDSYNC_EXPORT Logger : public QObject
     Q_OBJECT
 public:
     bool isNoop() const;
+    bool isLoggingToFile() const;
+
     void log(Log log);
     void doLog(const QString &log);
-
-    static void mirallLog(const QString &message);
+    void close();
 
     const QList<Log> &logs() const { return _logs; }
 
@@ -56,14 +57,37 @@ public:
     void postOptionalGuiLog(const QString &title, const QString &message);
     void postGuiMessage(const QString &title, const QString &message);
 
-    void setLogWindowActivated(bool activated);
     void setLogFile(const QString &name);
-    void setLogExpire(int expire);
+    void setLogExpire(std::chrono::hours expire);
     void setLogDir(const QString &dir);
     void setLogFlush(bool flush);
 
     bool logDebug() const { return _logDebug; }
     void setLogDebug(bool debug);
+
+    /** Returns where the automatic logdir would be */
+    QString temporaryFolderLogDirPath() const;
+
+    /** Sets up default dir log setup.
+     *
+     * logdir: a temporary folder
+     * logdebug: true
+     *
+     * Used in conjunction with ConfigFile::automaticLogDir,
+     * see LogBrowser::setupLoggingFromConfig.
+     */
+    void setupTemporaryFolderLogDir();
+
+    /** For switching off via logwindow */
+    void disableTemporaryFolderLogDir();
+
+    void addLogRule(const QSet<QString> &rules) {
+        setLogRules(_logRules + rules);
+    }
+    void removeLogRule(const QSet<QString> &rules) {
+        setLogRules(_logRules - rules);
+    }
+    void setLogRules(const QSet<QString> &rules);
 
 signals:
     void logWindowLog(const QString &);
@@ -76,18 +100,19 @@ public slots:
     void enterNextLogFile();
 
 private:
-    Logger(QObject *parent = 0);
-    ~Logger();
+    Logger(QObject *parent = nullptr);
+    ~Logger() override;
     QList<Log> _logs;
     bool _showTime;
-    bool _logWindowActivated;
     QFile _logFile;
     bool _doFileFlush;
-    int _logExpire;
+    std::chrono::hours _logExpire;
     bool _logDebug;
     QScopedPointer<QTextStream> _logstream;
-    QMutex _mutex;
+    mutable QMutex _mutex;
     QString _logDirectory;
+    bool _temporaryFolderLogDir = false;
+    QSet<QString> _logRules;
 };
 
 } // namespace OCC

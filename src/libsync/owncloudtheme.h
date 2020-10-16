@@ -28,25 +28,17 @@ class ownCloudTheme : public Theme
     Q_OBJECT
 public:
     ownCloudTheme();
-
-    QString configFileName() const Q_DECL_OVERRIDE;
-    QString about() const Q_DECL_OVERRIDE;
-
 #ifndef TOKEN_AUTH_ONLY
-    QIcon trayFolderIcon(const QString &) const Q_DECL_OVERRIDE;
-    QIcon applicationIcon() const Q_DECL_OVERRIDE;
-#endif
-    QString appName() const Q_DECL_OVERRIDE;
-    QString appNameGUI() const Q_DECL_OVERRIDE;
+    QVariant customMedia(CustomMediaType type) override;
 
-    QString helpUrl() const Q_DECL_OVERRIDE;
-#ifndef TOKEN_AUTH_ONLY
-    QVariant customMedia(CustomMediaType type) Q_DECL_OVERRIDE;
-
-    QColor wizardHeaderBackgroundColor() const Q_DECL_OVERRIDE;
-    QColor wizardHeaderTitleColor() const Q_DECL_OVERRIDE;
-    QPixmap wizardHeaderLogo() const Q_DECL_OVERRIDE;
+    QColor wizardHeaderBackgroundColor() const override;
+    QColor wizardHeaderTitleColor() const override;
+    QIcon wizardHeaderLogo() const override;
 #endif
+
+    // For owncloud-brandings *do* show the virtual files option.
+    bool showVirtualFilesOption() const override { return true; }
+    bool enableExperimentalFeatures() const override { return true; };
 
 private:
 };

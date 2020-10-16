@@ -17,6 +17,7 @@
 #define NETWORKJOBS_H
 
 #include "abstractnetworkjob.h"
+#include "common/result.h"
 #include <QUrlQuery>
 #include <functional>
 
@@ -24,6 +25,18 @@ class QUrl;
 class QJsonObject;
 
 namespace OCC {
+
+/** Strips quotes and gzip annotations */
+OWNCLOUDSYNC_EXPORT QByteArray parseEtag(const QByteArray &header);
+
+struct HttpError
+{
+    int code; // HTTP error code
+    QString message;
+};
+
+template <typename T>
+using HttpResult = Result<T, HttpError>;
 
 /**
  * @brief The EntityExistsJob class
@@ -33,14 +46,14 @@ class OWNCLOUDSYNC_EXPORT EntityExistsJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit EntityExistsJob(AccountPtr account, const QString &path, QObject *parent = 0);
-    void start() Q_DECL_OVERRIDE;
+    explicit EntityExistsJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
+    void start() override;
 
 signals:
     void exists(QNetworkReply *);
 
 private slots:
-    virtual bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 };
 
 /**
@@ -66,9 +79,9 @@ class OWNCLOUDSYNC_EXPORT LsColJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit LsColJob(AccountPtr account, const QString &path, QObject *parent = 0);
-    explicit LsColJob(AccountPtr account, const QUrl &url, QObject *parent = 0);
-    void start() Q_DECL_OVERRIDE;
+    explicit LsColJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
+    explicit LsColJob(AccountPtr account, const QUrl &url, QObject *parent = nullptr);
+    void start() override;
     QHash<QString, qint64> _sizes;
 
     /**
@@ -89,7 +102,7 @@ signals:
     void finishedWithoutError();
 
 private slots:
-    virtual bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 
 private:
     QList<QByteArray> _properties;
@@ -110,8 +123,8 @@ class OWNCLOUDSYNC_EXPORT PropfindJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit PropfindJob(AccountPtr account, const QString &path, QObject *parent = 0);
-    void start() Q_DECL_OVERRIDE;
+    explicit PropfindJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
+    void start() override;
 
     /**
      * Used to specify which properties shall be retrieved.
@@ -126,10 +139,10 @@ public:
 
 signals:
     void result(const QVariantMap &values);
-    void finishedWithError(QNetworkReply *reply = 0);
+    void finishedWithError(QNetworkReply *reply = nullptr);
 
 private slots:
-    virtual bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 
 private:
     QList<QByteArray> _properties;
@@ -151,9 +164,9 @@ public:
      * @param userId The user for which to obtain the avatar
      * @param size The size of the avatar (square so size*size)
      */
-    explicit AvatarJob(AccountPtr account, const QString &userId, int size, QObject *parent = 0);
+    explicit AvatarJob(AccountPtr account, const QString &userId, int size, QObject *parent = nullptr);
 
-    void start() Q_DECL_OVERRIDE;
+    void start() override;
 
     /** The retrieved avatar images don't have the circle shape by default */
     static QImage makeCircularAvatar(const QImage &baseAvatar);
@@ -166,7 +179,7 @@ signals:
     void avatarPixmap(const QImage &);
 
 private slots:
-    virtual bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 
 private:
     QUrl _avatarUrl;
@@ -186,8 +199,8 @@ class OWNCLOUDSYNC_EXPORT ProppatchJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit ProppatchJob(AccountPtr account, const QString &path, QObject *parent = 0);
-    void start() Q_DECL_OVERRIDE;
+    explicit ProppatchJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
+    void start() override;
 
     /**
      * Used to specify which properties shall be set.
@@ -205,7 +218,7 @@ signals:
     void finishedWithError();
 
 private slots:
-    virtual bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 
 private:
     QMap<QByteArray, QByteArray> _properties;
@@ -222,16 +235,16 @@ class OWNCLOUDSYNC_EXPORT MkColJob : public AbstractNetworkJob
     QMap<QByteArray, QByteArray> _extraHeaders;
 
 public:
-    explicit MkColJob(AccountPtr account, const QString &path, QObject *parent = 0);
+    explicit MkColJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
     explicit MkColJob(AccountPtr account, const QUrl &url,
-        const QMap<QByteArray, QByteArray> &extraHeaders, QObject *parent = 0);
-    void start() Q_DECL_OVERRIDE;
+        const QMap<QByteArray, QByteArray> &extraHeaders, QObject *parent = nullptr);
+    void start() override;
 
 signals:
     void finished(QNetworkReply::NetworkError);
 
 private slots:
-    virtual bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 };
 
 /**
@@ -242,8 +255,8 @@ class OWNCLOUDSYNC_EXPORT CheckServerJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit CheckServerJob(AccountPtr account, QObject *parent = 0);
-    void start() Q_DECL_OVERRIDE;
+    explicit CheckServerJob(AccountPtr account, QObject *parent = nullptr);
+    void start() override;
 
     static QString version(const QJsonObject &info);
     static QString versionString(const QJsonObject &info);
@@ -270,8 +283,8 @@ signals:
     void timeout(const QUrl &url);
 
 private:
-    bool finished() Q_DECL_OVERRIDE;
-    void onTimedOut() Q_DECL_OVERRIDE;
+    bool finished() override;
+    void onTimedOut() override;
 private slots:
     virtual void metaDataChangedSlot();
     virtual void encryptedSlot();
@@ -299,14 +312,15 @@ class OWNCLOUDSYNC_EXPORT RequestEtagJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit RequestEtagJob(AccountPtr account, const QString &path, QObject *parent = 0);
-    void start() Q_DECL_OVERRIDE;
+    explicit RequestEtagJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
+    void start() override;
 
 signals:
     void etagRetreived(const QString &etag);
+    void finishedWithResult(const HttpResult<QString> &etag);
 
 private slots:
-    virtual bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 };
 
 /**
@@ -328,7 +342,7 @@ class OWNCLOUDSYNC_EXPORT JsonApiJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit JsonApiJob(const AccountPtr &account, const QString &path, QObject *parent = 0);
+    explicit JsonApiJob(const AccountPtr &account, const QString &path, QObject *parent = nullptr);
 
     /**
      * @brief addQueryParams - add more parameters to the ocs call
@@ -343,10 +357,14 @@ public:
     void addQueryParams(const QUrlQuery &params);
 
 public slots:
-    void start() Q_DECL_OVERRIDE;
+    void start() override;
+    /**
+     * Start which allow to specify a request that might contains already headers or attributes
+     */
+    void startWithRequest(QNetworkRequest request);
 
 protected:
-    bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 signals:
 
     /**
@@ -368,25 +386,20 @@ class OWNCLOUDSYNC_EXPORT DetermineAuthTypeJob : public QObject
 {
     Q_OBJECT
 public:
-    enum AuthType {
+    enum class AuthType {
         Basic, // also the catch-all fallback for backwards compatibility reasons
         OAuth,
-        Shibboleth
+        Unknown
     };
+    Q_ENUM(AuthType)
 
-    explicit DetermineAuthTypeJob(AccountPtr account, QObject *parent = 0);
+    explicit DetermineAuthTypeJob(AccountPtr account, QObject *parent = nullptr);
     void start();
 signals:
     void authType(AuthType);
 
 private:
-    void checkBothDone();
-
     AccountPtr _account;
-    AuthType _resultGet = Basic;
-    AuthType _resultPropfind = Basic;
-    bool _getDone = false;
-    bool _propfindDone = false;
 };
 
 /**
@@ -399,16 +412,16 @@ class OWNCLOUDSYNC_EXPORT SimpleNetworkJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit SimpleNetworkJob(AccountPtr account, QObject *parent = 0);
+    explicit SimpleNetworkJob(AccountPtr account, QObject *parent = nullptr);
 
     QNetworkReply *startRequest(const QByteArray &verb, const QUrl &url,
         QNetworkRequest req = QNetworkRequest(),
-        QIODevice *requestBody = 0);
+        QIODevice *requestBody = nullptr);
 
 signals:
     void finishedSignal(QNetworkReply *reply);
 private slots:
-    bool finished() Q_DECL_OVERRIDE;
+    bool finished() override;
 };
 
 /**
@@ -423,9 +436,7 @@ private slots:
  * Note: targetFun is guaranteed to be called only through the event
  * loop and never directly.
  */
-void OWNCLOUDSYNC_EXPORT fetchPrivateLinkUrl(
-    AccountPtr account, const QString &remotePath,
-    const QByteArray &numericFileId, QObject *target,
+void OWNCLOUDSYNC_EXPORT fetchPrivateLinkUrl(AccountPtr account, const QString &remotePath, QObject *target,
     std::function<void(const QString &url)> targetFun);
 
 } // namespace OCC

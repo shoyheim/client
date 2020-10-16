@@ -24,9 +24,7 @@
 
 #include <stdint.h>
 
-#include "csync_private.h"
-
-const char OCSYNC_EXPORT *csync_instruction_str(enum csync_instructions_e instr);
+#include "csync.h"
 
 void OCSYNC_EXPORT csync_memstat_check(void);
 

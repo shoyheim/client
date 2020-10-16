@@ -76,11 +76,6 @@ QStringList AccountState::connectionErrors() const
     return _connectionErrors;
 }
 
-QString AccountState::connectionStatusString(ConnectionStatus status)
-{
-    return ConnectionValidator::statusString(status);
-}
-
 AccountState::State AccountState::state() const
 {
     return _state;
@@ -148,6 +143,7 @@ bool AccountState::isSignedOut() const
 void AccountState::signOutByUi()
 {
     account()->credentials()->forgetSensitiveData();
+    account()->clearCookieJar();
     setState(SignedOut);
 }
 
@@ -201,7 +197,7 @@ void AccountState::checkConnectivity()
     std::chrono::milliseconds polltime = cfg.remotePollInterval();
 
     if (isConnected() && _timeSinceLastETagCheck.isValid()
-        && _timeSinceLastETagCheck.hasExpired(polltime.count())) {
+        && !_timeSinceLastETagCheck.hasExpired(polltime.count())) {
         qCDebug(lcAccountState) << account()->displayName() << "The last ETag check succeeded within the last " << polltime.count() / 1000 << " secs. No connection check needed!";
         return;
     }
@@ -237,7 +233,7 @@ void AccountState::checkConnectivity()
 void AccountState::slotConnectionValidatorResult(ConnectionValidator::Status status, const QStringList &errors)
 {
     if (isSignedOut()) {
-        qCWarning(lcAccountState) << "Signed out, ignoring" << connectionStatusString(status) << _account->url().toString();
+        qCWarning(lcAccountState) << "Signed out, ignoring" << status << _account->url().toString();
         return;
     }
 
@@ -260,8 +256,8 @@ void AccountState::slotConnectionValidatorResult(ConnectionValidator::Status sta
 
     if (_connectionStatus != status) {
         qCInfo(lcAccountState) << "AccountState connection status change: "
-                               << connectionStatusString(_connectionStatus) << "->"
-                               << connectionStatusString(status);
+                               << _connectionStatus << "->"
+                               << status;
         _connectionStatus = status;
     }
     _connectionErrors = errors;
@@ -319,10 +315,10 @@ void AccountState::slotInvalidCredentials()
 
     if (account()->credentials()->ready()) {
         account()->credentials()->invalidateToken();
-        if (auto creds = qobject_cast<HttpCredentials *>(account()->credentials())) {
-            if (creds->refreshAccessToken())
-                return;
-        }
+    }
+    if (auto creds = qobject_cast<HttpCredentials *>(account()->credentials())) {
+        if (creds->refreshAccessToken())
+            return;
     }
     account()->credentials()->askFromUser();
 }
@@ -355,7 +351,7 @@ void AccountState::slotCredentialsAsked(AbstractCredentials *credentials)
         // When new credentials become available we always want to restart the
         // connection validation, even if it's currently running.
         _connectionValidator->deleteLater();
-        _connectionValidator = 0;
+        _connectionValidator = nullptr;
     }
 
     checkConnectivity();

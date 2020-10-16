@@ -19,8 +19,8 @@
   <property name="windowTitle">
    <string>Form</string>
   </property>
-  <layout class="QGridLayout" name="gridLayout">
-   <item row="0" column="0">
+  <layout class="QVBoxLayout" name="verticalLayout_2">
+   <item>
     <widget class="QLabel" name="topLabel">
      <property name="sizePolicy">
       <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
@@ -42,7 +42,7 @@
      </property>
     </widget>
    </item>
-   <item row="1" column="0">
+   <item>
     <layout class="QHBoxLayout" name="horizontalLayout_2">
      <item>
       <spacer name="horizontalSpacer">
@@ -105,8 +105,32 @@
          </item>
          <item>
           <widget class="QLabel" name="urlLabel">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>16</width>
+             <height>16</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16</width>
+             <height>16</height>
+            </size>
+           </property>
            <property name="text">
             <string/>
+           </property>
+           <property name="pixmap">
+            <pixmap resource="../../../client.qrc">:/client/resources/lock-https.svg</pixmap>
+           </property>
+           <property name="scaledContents">
+            <bool>true</bool>
            </property>
           </widget>
          </item>
@@ -148,7 +172,7 @@
      </item>
     </layout>
    </item>
-   <item row="2" column="0">
+   <item>
     <widget class="QLabel" name="errorLabel">
      <property name="sizePolicy">
       <sizepolicy hsizetype="MinimumExpanding" vsizetype="Maximum">
@@ -167,7 +191,7 @@
      </property>
     </widget>
    </item>
-   <item row="3" column="0">
+   <item>
     <spacer name="verticalSpacer">
      <property name="orientation">
       <enum>Qt::Vertical</enum>
@@ -183,14 +207,14 @@
      </property>
     </spacer>
    </item>
-   <item row="4" column="0">
+   <item>
     <layout class="QHBoxLayout" name="resultLayout">
      <property name="spacing">
       <number>0</number>
      </property>
     </layout>
    </item>
-   <item row="5" column="0">
+   <item>
     <widget class="QLabel" name="bottomLabel">
      <property name="text">
       <string>TextLabel</string>
@@ -209,6 +233,8 @@
    <header>wizard/postfixlineedit.h</header>
   </customwidget>
  </customwidgets>
- <resources/>
+ <resources>
+  <include location="../../../client.qrc"/>
+ </resources>
  <connections/>
 </ui>

@@ -20,7 +20,7 @@
 
 namespace OCC {
 
-ProgressDispatcher *ProgressDispatcher::_instance = 0;
+ProgressDispatcher *ProgressDispatcher::_instance = nullptr;
 
 QString Progress::asResultString(const SyncFileItem &item)
 {
@@ -29,7 +29,13 @@ QString Progress::asResultString(const SyncFileItem &item)
     case CSYNC_INSTRUCTION_NEW:
     case CSYNC_INSTRUCTION_TYPE_CHANGE:
         if (item._direction != SyncFileItem::Up) {
-            return QCoreApplication::translate("progress", "Downloaded");
+            if (item._type == ItemTypeVirtualFile) {
+                return QCoreApplication::translate("progress", "Virtual file created");
+            } else if (item._type == ItemTypeVirtualFileDehydration) {
+                return QCoreApplication::translate("progress", "Replaced by virtual file");
+            } else {
+                return QCoreApplication::translate("progress", "Downloaded");
+            }
         } else {
             return QCoreApplication::translate("progress", "Uploaded");
         }
@@ -139,7 +145,8 @@ void ProgressInfo::reset()
     _status = Starting;
 
     _currentItems.clear();
-    _currentDiscoveredFolder.clear();
+    _currentDiscoveredRemoteFolder.clear();
+    _currentDiscoveredLocalFolder.clear();
     _sizeProgress = Progress();
     _fileProgress = Progress();
     _totalSizeOfCompletedJobs = 0;
@@ -195,27 +202,43 @@ void ProgressInfo::adjustTotalsForFile(const SyncFileItem &item)
     }
 }
 
-quint64 ProgressInfo::totalFiles() const
+void ProgressInfo::updateTotalsForFile(const SyncFileItem &item, qint64 newSize)
+{
+    if (!shouldCountProgress(item)) {
+        return;
+    }
+
+    if (!_currentItems.contains(item._file)) {
+        _sizeProgress._total += newSize - item._size;
+    } else {
+        _sizeProgress._total += newSize - _currentItems[item._file]._progress._total;
+    }
+
+    setProgressItem(item, 0);
+    _currentItems[item._file]._progress._total = newSize;
+}
+
+qint64 ProgressInfo::totalFiles() const
 {
     return _fileProgress._total;
 }
 
-quint64 ProgressInfo::completedFiles() const
+qint64 ProgressInfo::completedFiles() const
 {
     return _fileProgress._completed;
 }
 
-quint64 ProgressInfo::currentFile() const
+qint64 ProgressInfo::currentFile() const
 {
     return completedFiles() + _currentItems.size();
 }
 
-quint64 ProgressInfo::totalSize() const
+qint64 ProgressInfo::totalSize() const
 {
     return _sizeProgress._total;
 }
 
-quint64 ProgressInfo::completedSize() const
+qint64 ProgressInfo::completedSize() const
 {
     return _sizeProgress._completed;
 }
@@ -226,23 +249,25 @@ void ProgressInfo::setProgressComplete(const SyncFileItem &item)
         return;
     }
 
-    _currentItems.remove(item._file);
     _fileProgress.setCompleted(_fileProgress._completed + item._affectedItems);
     if (ProgressInfo::isSizeDependent(item)) {
-        _totalSizeOfCompletedJobs += item._size;
+        _totalSizeOfCompletedJobs += _currentItems[item._file]._progress._total;
     }
+    _currentItems.remove(item._file);
     recomputeCompletedSize();
     _lastCompletedItem = item;
 }
 
-void ProgressInfo::setProgressItem(const SyncFileItem &item, quint64 completed)
+void ProgressInfo::setProgressItem(const SyncFileItem &item, qint64 completed)
 {
     if (!shouldCountProgress(item)) {
         return;
     }
 
-    _currentItems[item._file]._item = item;
-    _currentItems[item._file]._progress._total = item._size;
+    if (!_currentItems.contains(item._file)) {
+        _currentItems[item._file]._item = item;
+        _currentItems[item._file]._progress._total = item._size;
+    }
     _currentItems[item._file]._progress.setCompleted(completed);
     recomputeCompletedSize();
 
@@ -304,8 +329,8 @@ ProgressInfo::Estimates ProgressInfo::totalProgress() const
                                     1.0);
 
     double beOptimistic = nearMaxFps * slowTransfer;
-    size.estimatedEta = (1.0 - beOptimistic) * size.estimatedEta
-        + beOptimistic * optimisticEta();
+    size.estimatedEta = quint64((1.0 - beOptimistic) * size.estimatedEta
+        + beOptimistic * optimisticEta());
 
     return size;
 }
@@ -350,7 +375,7 @@ void ProgressInfo::updateEstimates()
 
 void ProgressInfo::recomputeCompletedSize()
 {
-    quint64 r = _totalSizeOfCompletedJobs;
+    qint64 r = _totalSizeOfCompletedJobs;
     foreach (const ProgressItem &i, _currentItems) {
         if (isSizeDependent(i._item))
             r += i._progress._completed;
@@ -361,21 +386,21 @@ void ProgressInfo::recomputeCompletedSize()
 ProgressInfo::Estimates ProgressInfo::Progress::estimates() const
 {
     Estimates est;
-    est.estimatedBandwidth = _progressPerSec;
-    if (_progressPerSec != 0) {
-        est.estimatedEta = (_total - _completed) / _progressPerSec * 1000.0;
+    est.estimatedBandwidth = qint64(_progressPerSec);
+    if (_progressPerSec != 0.0) {
+        est.estimatedEta = quint64((_total - _completed) / _progressPerSec * 1000.0);
     } else {
-        est.estimatedEta = 0; // looks better than quint64 max
+        est.estimatedEta = 0; // looks better than qint64 max
     }
     return est;
 }
 
-quint64 ProgressInfo::Progress::completed() const
+qint64 ProgressInfo::Progress::completed() const
 {
     return _completed;
 }
 
-quint64 ProgressInfo::Progress::remaining() const
+qint64 ProgressInfo::Progress::remaining() const
 {
     return _total - _completed;
 }
@@ -396,7 +421,7 @@ void ProgressInfo::Progress::update()
     _prevCompleted = _completed;
 }
 
-void ProgressInfo::Progress::setCompleted(quint64 completed)
+void ProgressInfo::Progress::setCompleted(qint64 completed)
 {
     _completed = qMin(completed, _total);
     _prevCompleted = qMin(_prevCompleted, _completed);

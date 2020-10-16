@@ -36,6 +36,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QEvent>
+#include <QCheckBox>
 
 #include <stdlib.h>
 
@@ -66,8 +67,10 @@ FolderWizardLocalPath::FolderWizardLocalPath(const AccountPtr &account)
     connect(_ui.localFolderChooseBtn, &QAbstractButton::clicked, this, &FolderWizardLocalPath::slotChooseLocalFolder);
     _ui.localFolderChooseBtn->setToolTip(tr("Click to select a local folder to sync."));
 
+    QUrl serverUrl = _account->url();
+    serverUrl.setUserName(_account->credentials()->user());
     QString defaultPath = QDir::homePath() + QLatin1Char('/') + Theme::instance()->appName();
-    defaultPath = FolderMan::instance()->findGoodPathForNewSyncFolder(defaultPath, account->url());
+    defaultPath = FolderMan::instance()->findGoodPathForNewSyncFolder(defaultPath, serverUrl);
     _ui.localFolderLineEdit->setText(QDir::toNativeSeparators(defaultPath));
     _ui.localFolderLineEdit->setToolTip(tr("Enter the path to the local folder."));
 
@@ -107,7 +110,7 @@ bool FolderWizardLocalPath::isComplete() const
     _ui.warnLabel->setWordWrap(true);
     if (isOk) {
         _ui.warnLabel->hide();
-        _ui.warnLabel->setText(QString());
+        _ui.warnLabel->clear();
     } else {
         _ui.warnLabel->show();
         QString warnings = formatWarnings(warnStrings);
@@ -227,10 +230,19 @@ void FolderWizardRemotePath::slotHandleMkdirNetworkError(QNetworkReply *reply)
     }
 }
 
-void FolderWizardRemotePath::slotHandleLsColNetworkError(QNetworkReply * /*reply*/)
+void FolderWizardRemotePath::slotHandleLsColNetworkError(QNetworkReply *reply)
 {
+    // Ignore 404s, otherwise users will get annoyed by error popups
+    // when not typing fast enough. It's still clear that a given path
+    // was not found, because the 'Next' button is disabled and no entry
+    // is selected in the tree view.
+    int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (httpCode == 404) {
+        showWarn(QString()); // hides the warning pane
+        return;
+    }
     auto job = qobject_cast<LsColJob *>(sender());
-    ASSERT(job);
+    OC_ASSERT(job);
     showWarn(tr("Failed to list a folder. Error: %1")
                  .arg(job->errorStringParsingBody()));
 }
@@ -243,7 +255,7 @@ static QTreeWidgetItem *findFirstChild(QTreeWidgetItem *parent, const QString &t
             return child;
         }
     }
-    return 0;
+    return nullptr;
 }
 
 void FolderWizardRemotePath::recursiveInsert(QTreeWidgetItem *parent, QStringList pathTrail, QString path)
@@ -360,7 +372,7 @@ void FolderWizardRemotePath::slotFolderEntryEdited(const QString &text)
         return;
     }
 
-    _ui.folderTreeWidget->setCurrentItem(0);
+    _ui.folderTreeWidget->setCurrentItem(nullptr);
     _lscolTimer.start(); // avoid sending a request on each keystroke
 }
 
@@ -373,9 +385,9 @@ void FolderWizardRemotePath::slotLsColFolderEntry()
     LsColJob *job = runLsColJob(path);
     // No error handling, no updating, we do this manually
     // because of extra logic in the typed-path case.
-    disconnect(job, 0, this, 0);
+    disconnect(job, nullptr, this, nullptr);
     connect(job, &LsColJob::finishedWithError,
-        this, &FolderWizardRemotePath::slotTypedPathError);
+        this, &FolderWizardRemotePath::slotHandleLsColNetworkError);
     connect(job, &LsColJob::directoryListingSubfolders,
         this, &FolderWizardRemotePath::slotTypedPathFound);
 }
@@ -384,21 +396,6 @@ void FolderWizardRemotePath::slotTypedPathFound(const QStringList &subpaths)
 {
     slotUpdateDirectories(subpaths);
     selectByPath(_ui.folderEntry->text());
-}
-
-void FolderWizardRemotePath::slotTypedPathError(QNetworkReply *reply)
-{
-    // Ignore 404s, otherwise users will get annoyed by error popups
-    // when not typing fast enough. It's still clear that a given path
-    // was not found, because the 'Next' button is disabled and no entry
-    // is selected in the tree view.
-    int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (httpCode == 404) {
-        showWarn(""); // hides the warning pane
-        return;
-    }
-
-    slotHandleLsColNetworkError(reply);
 }
 
 LsColJob *FolderWizardRemotePath::runLsColJob(const QString &path)
@@ -437,14 +434,13 @@ bool FolderWizardRemotePath::isComplete() const
         if (f->accountState()->account() != _account) {
             continue;
         }
-        QString curDir = f->remotePath();
-        if (!curDir.startsWith(QLatin1Char('/'))) {
-            curDir.prepend(QLatin1Char('/'));
-        }
+        QString curDir = f->remotePathTrailingSlash();
         if (QDir::cleanPath(dir) == QDir::cleanPath(curDir)) {
             warnStrings.append(tr("This folder is already being synced."));
-        } else if (dir.startsWith(curDir + QLatin1Char('/'))) {
+        } else if (dir.startsWith(curDir)) {
             warnStrings.append(tr("You are already syncing <i>%1</i>, which is a parent folder of <i>%2</i>.").arg(Utility::escape(curDir), Utility::escape(dir)));
+        } else if (curDir.startsWith(dir)) {
+            warnStrings.append(tr("You are already syncing <i>%1</i>, which is a subfolder of <i>%2</i>.").arg(Utility::escape(curDir), Utility::escape(dir)));
         }
     }
 
@@ -481,6 +477,18 @@ FolderWizardSelectiveSync::FolderWizardSelectiveSync(const AccountPtr &account)
     QVBoxLayout *layout = new QVBoxLayout(this);
     _selectiveSync = new SelectiveSyncWidget(account, this);
     layout->addWidget(_selectiveSync);
+
+    const auto vfsMode = bestAvailableVfsMode();
+    if (Theme::instance()->showVirtualFilesOption() && vfsMode != Vfs::Off && (vfsMode == Vfs::WindowsCfApi || Theme::instance()->enableExperimentalFeatures())) {
+
+        _virtualFilesCheckBox = new QCheckBox(tr("Use virtual files instead of downloading content immediately%1").arg(vfsMode == Vfs::WindowsCfApi ? QString() : tr(" (experimental)")));
+        connect(_virtualFilesCheckBox, &QCheckBox::clicked, this, &FolderWizardSelectiveSync::virtualFilesCheckboxClicked);
+        connect(_virtualFilesCheckBox, &QCheckBox::stateChanged, this, [this](int state) {
+            _selectiveSync->setEnabled(state == Qt::Unchecked);
+        });
+        _virtualFilesCheckBox->setChecked(vfsMode == Vfs::WindowsCfApi);
+        layout->addWidget(_virtualFilesCheckBox);
+    }
 }
 
 FolderWizardSelectiveSync::~FolderWizardSelectiveSync()
@@ -497,17 +505,15 @@ void FolderWizardSelectiveSync::initializePage()
     QString alias = QFileInfo(targetPath).fileName();
     if (alias.isEmpty())
         alias = Theme::instance()->appName();
-    QStringList initialBlacklist;
-    if (Theme::instance()->wizardSelectiveSyncDefaultNothing()) {
-        initialBlacklist = QStringList("/");
-    }
-    _selectiveSync->setFolderInfo(targetPath, alias, initialBlacklist);
+    _selectiveSync->setFolderInfo(targetPath, alias);
     QWizardPage::initializePage();
 }
 
 bool FolderWizardSelectiveSync::validatePage()
 {
-    wizard()->setProperty("selectiveSyncBlackList", QVariant(_selectiveSync->createBlackList()));
+    bool useVirtualFiles = _virtualFilesCheckBox && _virtualFilesCheckBox->isChecked();
+    wizard()->setProperty("selectiveSyncBlackList", useVirtualFiles ? QVariant() : QVariant(_selectiveSync->createBlackList()));
+    wizard()->setProperty("useVirtualFiles", QVariant(useVirtualFiles));
     return true;
 }
 
@@ -521,6 +527,18 @@ void FolderWizardSelectiveSync::cleanupPage()
     QWizardPage::cleanupPage();
 }
 
+void FolderWizardSelectiveSync::virtualFilesCheckboxClicked()
+{
+    // The click has already had an effect on the box, so if it's
+    // checked it was newly activated.
+    if (_virtualFilesCheckBox->isChecked()) {
+        OwncloudWizard::askExperimentalVirtualFilesFeature(this, [this](bool enable) {
+            if (!enable)
+                _virtualFilesCheckBox->setChecked(false);
+        });
+    }
+}
+
 
 // ====================================================================================
 
@@ -532,7 +550,7 @@ void FolderWizardSelectiveSync::cleanupPage()
 FolderWizard::FolderWizard(AccountPtr account, QWidget *parent)
     : QWizard(parent)
     , _folderWizardSourcePage(new FolderWizardLocalPath(account))
-    , _folderWizardTargetPage(0)
+    , _folderWizardTargetPage(nullptr)
     , _folderWizardSelectiveSyncPage(new FolderWizardSelectiveSync(account))
 {
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
@@ -548,6 +566,7 @@ FolderWizard::FolderWizard(AccountPtr account, QWidget *parent)
     setWindowTitle(tr("Add Folder Sync Connection"));
     setOptions(QWizard::CancelButtonOnLeft);
     setButtonText(QWizard::FinishButton, tr("Add Sync Connection"));
+    setWizardStyle(QWizard::ModernStyle);
 }
 
 FolderWizard::~FolderWizard()

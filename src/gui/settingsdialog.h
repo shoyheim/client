@@ -16,6 +16,7 @@
 #define SETTINGSDIALOG_H
 
 #include <QDialog>
+#include <QMainWindow>
 #include <QStyledItemDelegate>
 
 #include "progressdispatcher.h"
@@ -43,15 +44,17 @@ class ActivitySettings;
  * @brief The SettingsDialog class
  * @ingroup gui
  */
-class SettingsDialog : public QDialog
+class SettingsDialog : public QMainWindow
 {
     Q_OBJECT
+    Q_PROPERTY(QWidget* currentPage READ currentPage)
 
 public:
-    explicit SettingsDialog(ownCloudGui *gui, QWidget *parent = 0);
-    ~SettingsDialog();
+    explicit SettingsDialog(ownCloudGui *gui, QWidget *parent = nullptr);
+    ~SettingsDialog() override;    
+    QSize minimumSizeHint() const override;
 
-    void addAccount(const QString &title, QWidget *widget);
+    QWidget* currentPage();
 
 public slots:
     void showFirstPage();
@@ -64,9 +67,8 @@ public slots:
     void slotAccountDisplayNameChanged();
 
 protected:
-    void reject() Q_DECL_OVERRIDE;
-    void accept() Q_DECL_OVERRIDE;
-    void changeEvent(QEvent *) Q_DECL_OVERRIDE;
+    void changeEvent(QEvent *) override;
+    void setVisible(bool visible) override;
 
 private slots:
     void accountAdded(AccountState *);
@@ -75,9 +77,7 @@ private slots:
 private:
     void customizeStyle();
 
-    QIcon createColorAwareIcon(const QString &name);
-    QAction *createColorAwareAction(const QString &iconName, const QString &fileName);
-    QAction *createActionWithIcon(const QIcon &icon, const QString &text, const QString &iconPath = QString());
+    QAction *createActionWithIcon(const QIcon &icon, const QString &text);
 
     Ui::SettingsDialog *const _ui;
 
@@ -89,12 +89,12 @@ private:
     // case the account avatar changes
     QHash<Account *, QAction *> _actionForAccount;
 
-    QToolBar *_toolBar;
-
     ActivitySettings *_activitySettings;
 
     QAction *_activityAction;
+    QAction *_addAccountAction = nullptr;
     ownCloudGui *_gui;
+
 };
 }
 

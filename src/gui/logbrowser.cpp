@@ -18,202 +18,105 @@
 #include <iostream>
 
 #include <QDialogButtonBox>
-#include <QTextDocument>
 #include <QLayout>
 #include <QPushButton>
 #include <QLabel>
-#include <QFileDialog>
 #include <QDir>
 #include <QTextStream>
 #include <QMessageBox>
 #include <QCoreApplication>
 #include <QSettings>
 #include <QAction>
+#include <QDesktopServices>
 
 #include "configfile.h"
 #include "logger.h"
+#include "ui_logbrowser.h"
 
 namespace OCC {
 
 // ==============================================================================
 
-LogWidget::LogWidget(QWidget *parent)
-    : QPlainTextEdit(parent)
-{
-    setReadOnly(true);
-    QFont font;
-    font.setFamily(QLatin1String("Courier New"));
-    font.setFixedPitch(true);
-    document()->setDefaultFont(font);
-}
-
-// ==============================================================================
+const std::chrono::hours defaultExpireDuration(4);
 
 LogBrowser::LogBrowser(QWidget *parent)
     : QDialog(parent)
-    , _logWidget(new LogWidget(parent))
+    , ui(new Ui::LogBrowser)
 {
+    ui->setupUi(this);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
-    setObjectName("LogBrowser"); // for save/restoreGeometry()
-    setWindowTitle(tr("Log Output"));
-    setMinimumWidth(600);
 
-    QVBoxLayout *mainLayout = new QVBoxLayout;
-    // mainLayout->setMargin(0);
+    ui->locationLabel->setText(Logger::instance()->temporaryFolderLogDirPath());
 
-    mainLayout->addWidget(_logWidget);
+    ui->enableLoggingButton->setChecked(ConfigFile().automaticLogDir());
+    connect(ui->enableLoggingButton, &QCheckBox::toggled, this, &LogBrowser::togglePermanentLogging);
 
-    QHBoxLayout *toolLayout = new QHBoxLayout;
-    mainLayout->addLayout(toolLayout);
+    ui->httpLogButton->setChecked(ConfigFile().logHttp());
+    connect(ui->httpLogButton, &QCheckBox::toggled, this, [](bool b) {
+        ConfigFile().setLogHttp(b);
+    });
 
-    // Search input field
-    QLabel *lab = new QLabel(tr("&Search:") + " ");
-    _findTermEdit = new QLineEdit;
-    lab->setBuddy(_findTermEdit);
-    toolLayout->addWidget(lab);
-    toolLayout->addWidget(_findTermEdit);
+    ui->deleteLogsButton->setText(tr("Delete logs older than %1 hours").arg(QString::number(defaultExpireDuration.count())));
+    ui->deleteLogsButton->setChecked(bool(ConfigFile().automaticDeleteOldLogsAge()));
+    connect(ui->deleteLogsButton, &QCheckBox::toggled, this, &LogBrowser::toggleLogDeletion);
 
-    // find button
-    QPushButton *findBtn = new QPushButton;
-    findBtn->setText(tr("&Find"));
-    connect(findBtn, &QAbstractButton::clicked, this, &LogBrowser::slotFind);
-    toolLayout->addWidget(findBtn);
 
-    // stretch
-    toolLayout->addStretch(1);
-    _statusLabel = new QLabel;
-    toolLayout->addWidget(_statusLabel);
-    toolLayout->addStretch(5);
-
-    // Debug logging
-    _logDebugCheckBox = new QCheckBox(tr("&Capture debug messages") + " ");
-    connect(_logDebugCheckBox, &QCheckBox::stateChanged, this, &LogBrowser::slotDebugCheckStateChanged);
-    toolLayout->addWidget(_logDebugCheckBox);
-
-    QDialogButtonBox *btnbox = new QDialogButtonBox;
-    QPushButton *closeBtn = btnbox->addButton(QDialogButtonBox::Close);
-    connect(closeBtn, &QAbstractButton::clicked, this, &QWidget::close);
-
-    mainLayout->addWidget(btnbox);
-
-    // clear button
-    _clearBtn = new QPushButton;
-    _clearBtn->setText(tr("Clear"));
-    _clearBtn->setToolTip(tr("Clear the log display."));
-    btnbox->addButton(_clearBtn, QDialogButtonBox::ActionRole);
-    connect(_clearBtn, &QAbstractButton::clicked, this, &LogBrowser::slotClearLog);
-
-    // save Button
-    _saveBtn = new QPushButton;
-    _saveBtn->setText(tr("S&ave"));
-    _saveBtn->setToolTip(tr("Save the log file to a file on disk for debugging."));
-    btnbox->addButton(_saveBtn, QDialogButtonBox::ActionRole);
-    connect(_saveBtn, &QAbstractButton::clicked, this, &LogBrowser::slotSave);
-
-    setLayout(mainLayout);
-
-    setModal(false);
-
-    Logger::instance()->setLogWindowActivated(true);
-    // Direct connection for log coming from this thread, and queued for the one in a different thread
-    connect(Logger::instance(), &Logger::logWindowLog, this, &LogBrowser::slotNewLog, Qt::AutoConnection);
-
-    QAction *showLogWindow = new QAction(this);
-    showLogWindow->setShortcut(QKeySequence("F12"));
-    connect(showLogWindow, &QAction::triggered, this, &QWidget::close);
-    addAction(showLogWindow);
+    connect(ui->openFolderButton, &QPushButton::clicked, this, []() {
+        QString path = Logger::instance()->temporaryFolderLogDirPath();
+        QDir().mkpath(path);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    });
+    connect(ui->buttonBox->button(QDialogButtonBox::Close), &QPushButton::clicked, this, &QWidget::close);
 
     ConfigFile cfg;
     cfg.restoreGeometry(this);
-    int lines = cfg.maxLogLines();
-    _logWidget->document()->setMaximumBlockCount(lines);
 }
 
 LogBrowser::~LogBrowser()
 {
 }
 
-void LogBrowser::showEvent(QShowEvent *)
+void LogBrowser::setupLoggingFromConfig()
 {
-    // This could have been changed through the --logdebug argument passed through the single application.
-    _logDebugCheckBox->setCheckState(Logger::instance()->logDebug() ? Qt::Checked : Qt::Unchecked);
-}
+    ConfigFile config;
+    auto logger = Logger::instance();
 
-void LogBrowser::closeEvent(QCloseEvent *)
-{
-    ConfigFile cfg;
-    cfg.saveGeometry(this);
-}
+    if (config.automaticLogDir()) {
+        // Don't override other configured logging
+        if (logger->isLoggingToFile())
+            return;
 
-
-void LogBrowser::slotNewLog(const QString &msg)
-{
-    if (_logWidget->isVisible()) {
-        _logWidget->appendPlainText(msg);
-    }
-}
-
-
-void LogBrowser::slotFind()
-{
-    QString searchText = _findTermEdit->text();
-
-    if (searchText.isEmpty())
-        return;
-
-    search(searchText);
-}
-
-void LogBrowser::slotDebugCheckStateChanged(int checkState)
-{
-    Logger::instance()->setLogDebug(checkState == Qt::Checked);
-}
-
-void LogBrowser::search(const QString &str)
-{
-    QList<QTextEdit::ExtraSelection> extraSelections;
-
-    _logWidget->moveCursor(QTextCursor::Start);
-    QColor color = QColor(Qt::gray).lighter(130);
-    _statusLabel->clear();
-
-    while (_logWidget->find(str)) {
-        QTextEdit::ExtraSelection extra;
-        extra.format.setBackground(color);
-
-        extra.cursor = _logWidget->textCursor();
-        extraSelections.append(extra);
-    }
-
-    QString stat = QString::fromLatin1("Search term %1 with %2 search results.").arg(str).arg(extraSelections.count());
-    _statusLabel->setText(stat);
-
-    _logWidget->setExtraSelections(extraSelections);
-}
-
-void LogBrowser::slotSave()
-{
-    _saveBtn->setEnabled(false);
-
-    QString saveFile = QFileDialog::getSaveFileName(this, tr("Save log file"), QDir::homePath());
-
-    if (!saveFile.isEmpty()) {
-        QFile file(saveFile);
-
-        if (file.open(QIODevice::WriteOnly)) {
-            QTextStream stream(&file);
-            stream << _logWidget->toPlainText();
-            file.close();
+        logger->setupTemporaryFolderLogDir();
+        if (auto deleteOldLogsHours = config.automaticDeleteOldLogsAge()) {
+            logger->setLogExpire(*deleteOldLogsHours);
         } else {
-            QMessageBox::critical(this, tr("Error"), tr("Could not write to log file %1").arg(saveFile));
+            logger->setLogExpire(std::chrono::hours(0));
         }
+        logger->enterNextLogFile();
+    } else {
+        logger->disableTemporaryFolderLogDir();
     }
-    _saveBtn->setEnabled(true);
 }
 
-void LogBrowser::slotClearLog()
+void LogBrowser::togglePermanentLogging(bool enabled)
 {
-    _logWidget->clear();
+    ConfigFile config;
+    config.setAutomaticLogDir(enabled);
+    setupLoggingFromConfig();
+}
+
+void LogBrowser::toggleLogDeletion(bool enabled)
+{
+    ConfigFile config;
+    auto logger = Logger::instance();
+
+    if (enabled) {
+        config.setAutomaticDeleteOldLogsAge(defaultExpireDuration);
+        logger->setLogExpire(defaultExpireDuration);
+    } else {
+        config.setAutomaticDeleteOldLogsAge({});
+        logger->setLogExpire(std::chrono::hours(0));
+    }
 }
 
 } // namespace

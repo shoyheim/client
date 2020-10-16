@@ -14,23 +14,28 @@
  */
 
 #include "account.h"
+#include "config.h"
 #include "configfile.h"
 #include "theme.h"
+
+#include "application.h"
+#include "settingsdialog.h"
 
 #include "wizard/owncloudwizard.h"
 #include "wizard/owncloudsetuppage.h"
 #include "wizard/owncloudhttpcredspage.h"
 #include "wizard/owncloudoauthcredspage.h"
-#ifndef NO_SHIBBOLETH
-#include "wizard/owncloudshibbolethcredspage.h"
-#endif
 #include "wizard/owncloudadvancedsetuppage.h"
 #include "wizard/owncloudwizardresultpage.h"
+
+#include "common/vfs.h"
 
 #include "QProgressIndicator.h"
 
 #include <QtCore>
 #include <QtGui>
+#include <QMessageBox>
+#include <owncloudgui.h>
 
 #include <stdlib.h>
 
@@ -40,25 +45,22 @@ Q_LOGGING_CATEGORY(lcWizard, "gui.wizard", QtInfoMsg)
 
 OwncloudWizard::OwncloudWizard(QWidget *parent)
     : QWizard(parent)
-    , _account(0)
+    , _account(nullptr)
     , _setupPage(new OwncloudSetupPage(this))
     , _httpCredsPage(new OwncloudHttpCredsPage(this))
-    , _browserCredsPage(new OwncloudOAuthCredsPage)
-#ifndef NO_SHIBBOLETH
-    , _shibbolethCredsPage(new OwncloudShibbolethCredsPage)
-#endif
+    , _oauthCredsPage(new OwncloudOAuthCredsPage)
     , _advancedSetupPage(new OwncloudAdvancedSetupPage)
     , _resultPage(new OwncloudWizardResultPage)
-    , _credentialsPage(0)
-    , _setupLog()
+    , _credentialsPage(nullptr)
 {
+    setObjectName("owncloudWizard");
+    auto size = ocApp()->gui()->settingsDialog()->minimumSizeHint();
+    resize(size.width() - 50, size.height() - 50);
+
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     setPage(WizardCommon::Page_ServerSetup, _setupPage);
     setPage(WizardCommon::Page_HttpCreds, _httpCredsPage);
-    setPage(WizardCommon::Page_OAuthCreds, _browserCredsPage);
-#ifndef NO_SHIBBOLETH
-    setPage(WizardCommon::Page_ShibbolethCreds, _shibbolethCredsPage);
-#endif
+    setPage(WizardCommon::Page_OAuthCreds, _oauthCredsPage);
     setPage(WizardCommon::Page_AdvancedSetup, _advancedSetupPage);
     setPage(WizardCommon::Page_Result, _resultPage);
 
@@ -71,26 +73,22 @@ OwncloudWizard::OwncloudWizard(QWidget *parent)
     connect(this, &QWizard::currentIdChanged, this, &OwncloudWizard::slotCurrentPageChanged);
     connect(_setupPage, &OwncloudSetupPage::determineAuthType, this, &OwncloudWizard::determineAuthType);
     connect(_httpCredsPage, &OwncloudHttpCredsPage::connectToOCUrl, this, &OwncloudWizard::connectToOCUrl);
-    connect(_browserCredsPage, &OwncloudOAuthCredsPage::connectToOCUrl, this, &OwncloudWizard::connectToOCUrl);
-#ifndef NO_SHIBBOLETH
-    connect(_shibbolethCredsPage, &OwncloudShibbolethCredsPage::connectToOCUrl, this, &OwncloudWizard::connectToOCUrl);
-#endif
+    connect(_oauthCredsPage, &OwncloudOAuthCredsPage::connectToOCUrl, this, &OwncloudWizard::connectToOCUrl);
     connect(_advancedSetupPage, &OwncloudAdvancedSetupPage::createLocalAndRemoteFolders,
         this, &OwncloudWizard::createLocalAndRemoteFolders);
-    connect(this, &QWizard::customButtonClicked, this, &OwncloudWizard::skipFolderConfiguration);
 
 
     Theme *theme = Theme::instance();
     setWindowTitle(tr("%1 Connection Wizard").arg(theme->appNameGUI()));
     setWizardStyle(QWizard::ModernStyle);
-    setPixmap(QWizard::BannerPixmap, theme->wizardHeaderBanner());
-    setPixmap(QWizard::LogoPixmap, theme->wizardHeaderLogo());
+    setPixmap(QWizard::BannerPixmap, theme->wizardHeaderBanner({ width(), 78 }));
+    setPixmap(QWizard::LogoPixmap, theme->wizardHeaderLogo().pixmap(132, 63));
     setOption(QWizard::NoBackButtonOnStartPage);
     setOption(QWizard::NoBackButtonOnLastPage);
-    setOption(QWizard::NoCancelButton);
+    setOption(QWizard::NoCancelButton, false);
+    setOption(QWizard::CancelButtonOnLeft);
     setTitleFormat(Qt::RichText);
     setSubTitleFormat(Qt::RichText);
-    setButtonText(QWizard::CustomButton1, tr("Skip folders configuration"));
 }
 
 void OwncloudWizard::setAccount(AccountPtr account)
@@ -111,6 +109,16 @@ QString OwncloudWizard::localFolder() const
 QStringList OwncloudWizard::selectiveSyncBlacklist() const
 {
     return _advancedSetupPage->selectiveSyncBlacklist();
+}
+
+bool OwncloudWizard::useVirtualFileSync() const
+{
+    return _advancedSetupPage->useVirtualFileSync();
+}
+
+bool OwncloudWizard::manualFolderConfig() const
+{
+    return _advancedSetupPage->manualFolderConfig();
 }
 
 bool OwncloudWizard::isConfirmBigFolderChecked() const
@@ -145,14 +153,8 @@ void OwncloudWizard::successfulStep()
         break;
 
     case WizardCommon::Page_OAuthCreds:
-        _browserCredsPage->setConnected();
+        _oauthCredsPage->setConnected();
         break;
-
-#ifndef NO_SHIBBOLETH
-    case WizardCommon::Page_ShibbolethCreds:
-        _shibbolethCredsPage->setConnected();
-        break;
-#endif
 
     case WizardCommon::Page_AdvancedSetup:
         _advancedSetupPage->directoriesCreated();
@@ -164,19 +166,21 @@ void OwncloudWizard::successfulStep()
         break;
     }
 
+    ownCloudGui::raiseDialog(this);
     next();
+}
+
+DetermineAuthTypeJob::AuthType OwncloudWizard::authType() const
+{
+    return _authType;
 }
 
 void OwncloudWizard::setAuthType(DetermineAuthTypeJob::AuthType type)
 {
+    _authType = type;
     _setupPage->setAuthType(type);
-#ifndef NO_SHIBBOLETH
-    if (type == DetermineAuthTypeJob::Shibboleth) {
-        _credentialsPage = _shibbolethCredsPage;
-    } else
-#endif
-        if (type == DetermineAuthTypeJob::OAuth) {
-        _credentialsPage = _browserCredsPage;
+    if (type == DetermineAuthTypeJob::AuthType::OAuth) {
+        _credentialsPage = _oauthCredsPage;
     } else { // try Basic auth even for "Unknown"
         _credentialsPage = _httpCredsPage;
     }
@@ -199,13 +203,6 @@ void OwncloudWizard::slotCurrentPageChanged(int id)
         // Immediately close on show, we currently don't want this page anymore
         done(Accepted);
     }
-
-    setOption(QWizard::HaveCustomButton1, id == WizardCommon::Page_AdvancedSetup);
-    if (id == WizardCommon::Page_AdvancedSetup && _credentialsPage == _browserCredsPage) {
-        // For OAuth, disable the back button in the Page_AdvancedSetup because we don't want
-        // to re-open the browser.
-        button(QWizard::BackButton)->setEnabled(false);
-    }
 }
 
 void OwncloudWizard::displayError(const QString &msg, bool retryHTTPonly)
@@ -227,7 +224,6 @@ void OwncloudWizard::displayError(const QString &msg, bool retryHTTPonly)
 
 void OwncloudWizard::appendToConfigurationLog(const QString &msg, LogType /*type*/)
 {
-    _setupLog << msg;
     qCDebug(lcWizard) << "Setup-Log: " << msg;
 }
 
@@ -242,7 +238,48 @@ AbstractCredentials *OwncloudWizard::getCredentials() const
         return _credentialsPage->getCredentials();
     }
 
-    return 0;
+    return nullptr;
+}
+
+void OwncloudWizard::askExperimentalVirtualFilesFeature(QWidget *receiver, const std::function<void(bool enable)> &callback)
+{
+    const auto bestVfsMode = bestAvailableVfsMode();
+    QMessageBox *msgBox = nullptr;
+    QPushButton *acceptButton = nullptr;
+    switch (bestVfsMode)
+    {
+    case Vfs::WindowsCfApi:
+        callback(true);
+        return;
+    case Vfs::WithSuffix:
+        msgBox = new QMessageBox(
+            QMessageBox::Warning,
+            tr("Enable experimental feature?"),
+            tr("When the \"virtual files\" mode is enabled no files will be downloaded initially. "
+               "Instead, a tiny \"%1\" file will be created for each file that exists on the server. "
+               "The contents can be downloaded by running these files or by using their context menu."
+               "\n\n"
+               "The virtual files mode is mutually exclusive with selective sync. "
+               "Currently unselected folders will be translated to online-only folders "
+               "and your selective sync settings will be reset."
+               "\n\n"
+               "Switching to this mode will abort any currently running synchronization."
+               "\n\n"
+               "This is a new, experimental mode. If you decide to use it, please report any "
+               "issues that come up.")
+                .arg(APPLICATION_DOTVIRTUALFILE_SUFFIX), QMessageBox::NoButton, receiver);
+        acceptButton = msgBox->addButton(tr("Enable experimental placeholder mode"), QMessageBox::AcceptRole);
+        msgBox->addButton(tr("Stay safe"), QMessageBox::RejectRole);
+        break;
+    case Vfs::Off:
+        Q_UNREACHABLE();
+    }
+
+    connect(msgBox, &QMessageBox::accepted, receiver, [callback, msgBox, acceptButton] {
+        callback(msgBox->clickedButton() == acceptButton);
+        msgBox->deleteLater();
+    });
+    msgBox->open();
 }
 
 } // end namespace

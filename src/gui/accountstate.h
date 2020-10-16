@@ -39,6 +39,8 @@ typedef QExplicitlySharedDataPointer<AccountState> AccountStatePtr;
 class AccountState : public QObject, public QSharedData
 {
     Q_OBJECT
+    Q_PROPERTY(AccountPtr account MEMBER _account)
+
 public:
     enum State {
         /// Not even attempting to connect, most likely because the
@@ -76,7 +78,7 @@ public:
 
     /// Use the account as parent
     explicit AccountState(AccountPtr account);
-    ~AccountState();
+    ~AccountState() override;
 
     /** Creates an account state from settings and an Account object.
      *
@@ -94,7 +96,6 @@ public:
 
     ConnectionStatus connectionStatus() const;
     QStringList connectionErrors() const;
-    static QString connectionStatusString(ConnectionStatus status);
 
     State state() const;
     static QString stateString(State state);

@@ -12,18 +12,13 @@
  * details.
  */
 
-#include "stdafx.h"
-
 #include "OCOverlay.h"
 
 #include "OCOverlayFactory.h"
-#include "RegistryUtil.h"
 #include "StringUtil.h"
 
 #include "UtilConstants.h"
 #include "RemotePathChecker.h"
-
-#include "resource.h"
 
 #include <algorithm>
 #include <iostream>

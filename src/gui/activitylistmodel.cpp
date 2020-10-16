@@ -25,6 +25,7 @@
 #include "folderman.h"
 #include "accessmanager.h"
 #include "activityitemdelegate.h"
+#include "guiutility.h"
 
 #include "activitydata.h"
 #include "activitylistmodel.h"
@@ -68,9 +69,11 @@ QVariant ActivityListModel::data(const QModelIndex &index, int role) const
         return QVariant(); // FIXME once the action can be quantified, display on Icon
         break;
     case ActivityItemDelegate::UserIconRole:
-        return QIcon(QLatin1String(":/client/resources/account.png"));
+        return QIcon(QStringLiteral(":/client/resources/account.svg"));
         break;
     case Qt::ToolTipRole:
+        return tr("%1 %2 on %3").arg(a._subject, Utility::timeAgoInWords(a._dateTime), a._accName);
+        break;
     case ActivityItemDelegate::ActionTextRole:
         return a._subject;
         break;
@@ -214,17 +217,19 @@ void ActivityListModel::slotRefreshActivity(AccountState *ast)
 void ActivityListModel::slotRemoveAccount(AccountState *ast)
 {
     if (_activityLists.contains(ast)) {
-        int i = 0;
         const QString accountToRemove = ast->account()->displayName();
 
         QMutableListIterator<Activity> it(_finalList);
 
+        int i = 0;
         while (it.hasNext()) {
             Activity activity = it.next();
             if (activity._accName == accountToRemove) {
-                beginRemoveRows(QModelIndex(), i, i + 1);
+                beginRemoveRows(QModelIndex(), i, i);
                 it.remove();
                 endRemoveRows();
+            } else {
+                ++i;
             }
         }
         _activityLists.remove(ast);

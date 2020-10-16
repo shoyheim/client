@@ -40,6 +40,8 @@ class QSettings;
 
 namespace OCC {
 
+class SyncJournal;
+
 Q_DECLARE_LOGGING_CATEGORY(lcUtility)
 
 /** \addtogroup libsync
@@ -53,6 +55,15 @@ namespace Utility {
     OCSYNC_EXPORT bool writeRandomFile(const QString &fname, int size = -1);
     OCSYNC_EXPORT QString octetsToString(qint64 octets);
     OCSYNC_EXPORT QByteArray userAgentString();
+    /**
+      * @brief Return whether launch on startup is enabled system wide.
+      *
+      * If this returns true, the checkbox for user specific launch
+      * on startup will be hidden.
+      *
+      * Currently only implemented on Windows.
+      */
+    OCSYNC_EXPORT bool hasSystemLaunchOnStartup(const QString &appName);
     OCSYNC_EXPORT bool hasLaunchOnStartup(const QString &appName);
     OCSYNC_EXPORT void setLaunchOnStartup(const QString &appName, const QString &guiName, bool launch);
 
@@ -180,25 +191,40 @@ namespace Utility {
 
     /**  Returns a new settings pre-set in a specific group.  The Settings will be created
          with the given parent. If no parent is specified, the caller must destroy the settings */
-    OCSYNC_EXPORT std::unique_ptr<QSettings> settingsWithGroup(const QString &group, QObject *parent = 0);
+    OCSYNC_EXPORT std::unique_ptr<QSettings> settingsWithGroup(const QString &group, QObject *parent = nullptr);
+
+    /** Sanitizes a string that shall become part of a filename.
+     *
+     * Filters out reserved characters like
+     * - unicode control and format characters
+     * - reserved characters: /, ?, <, >, \, :, *, |, and "
+     *
+     * Warning: This does not sanitize the whole resulting string, so
+     * - unix reserved filenames ('.', '..')
+     * - trailing periods and spaces
+     * - windows reserved filenames ('CON' etc)
+     * will pass unchanged.
+     */
+    OCSYNC_EXPORT QString sanitizeForFileName(const QString &name);
 
     /** Returns a file name based on \a fn that's suitable for a conflict.
      */
-    OCSYNC_EXPORT QString makeConflictFileName(const QString &fn, const QDateTime &dt);
+    OCSYNC_EXPORT QString makeConflictFileName(
+        const QString &fn, const QDateTime &dt, const QString &user);
 
     /** Returns whether a file name indicates a conflict file
      */
     OCSYNC_EXPORT bool isConflictFile(const char *name);
     OCSYNC_EXPORT bool isConflictFile(const QString &name);
 
-    /** Find the base name for a conflict file name
+    /** Find the base name for a conflict file name, using name pattern only
      *
      * Will return an empty string if it's not a conflict file.
      *
      * Prefer to use the data from the conflicts table in the journal to determine
-     * a conflict's base file.
+     * a conflict's base file, see SyncJournal::conflictFileBaseName()
      */
-    OCSYNC_EXPORT QByteArray conflictFileBaseName(const QByteArray &conflictName);
+    OCSYNC_EXPORT QByteArray conflictFileBaseNameFromPattern(const QByteArray &conflictName);
 
 #ifdef Q_OS_WIN
     OCSYNC_EXPORT QVariant registryGetKeyValue(HKEY hRootKey, const QString &subKey, const QString &valueName);
@@ -206,6 +232,17 @@ namespace Utility {
     OCSYNC_EXPORT bool registryDeleteKeyTree(HKEY hRootKey, const QString &subKey);
     OCSYNC_EXPORT bool registryDeleteKeyValue(HKEY hRootKey, const QString &subKey, const QString &valueName);
     OCSYNC_EXPORT bool registryWalkSubKeys(HKEY hRootKey, const QString &subKey, const std::function<void(HKEY, const QString &)> &callback);
+
+    // Possibly refactor to share code with UnixTimevalToFileTime in c_time.c
+    OCSYNC_EXPORT void UnixTimeToFiletime(time_t t, FILETIME *filetime);
+    OCSYNC_EXPORT void FiletimeToLargeIntegerFiletime(FILETIME *filetime, LARGE_INTEGER *hundredNSecs);
+    OCSYNC_EXPORT void UnixTimeToLargeIntegerFiletime(time_t t, LARGE_INTEGER *hundredNSecs);
+
+    OCSYNC_EXPORT QString formatWinError(long error);
+    inline QString formatLastWinError() {
+        return formatWinError(GetLastError());
+    };
+
 #endif
 }
 /** @} */ // \addtogroup

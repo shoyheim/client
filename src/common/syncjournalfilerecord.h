@@ -38,31 +38,26 @@ class SyncFileItem;
 class OCSYNC_EXPORT SyncJournalFileRecord
 {
 public:
-    SyncJournalFileRecord();
-
     bool isValid() const
     {
         return !_path.isEmpty();
     }
 
-    /** Returns the numeric part of the full id in _fileId.
-     *
-     * On the server this is sometimes known as the internal file id.
-     *
-     * It is used in the construction of private links.
-     */
-    QByteArray numericFileId() const;
     QDateTime modDateTime() const { return Utility::qDateTimeFromTime_t(_modtime); }
 
+    bool isDirectory() const { return _type == ItemTypeDirectory; }
+    bool isFile() const { return _type == ItemTypeFile || _type == ItemTypeVirtualFileDehydration; }
+    bool isVirtualFile() const { return _type == ItemTypeVirtualFile || _type == ItemTypeVirtualFileDownload; }
+
     QByteArray _path;
-    quint64 _inode;
-    qint64 _modtime;
-    ItemType _type;
+    quint64 _inode = 0;
+    qint64 _modtime = 0;
+    ItemType _type = ItemTypeSkip;
     QByteArray _etag;
     QByteArray _fileId;
-    qint64 _fileSize;
+    qint64 _fileSize = 0;
     RemotePermissions _remotePerm;
-    bool _serverHasIgnoredFiles;
+    bool _serverHasIgnoredFiles = false;
     QByteArray _checksumHeader;
 };
 
@@ -109,23 +104,23 @@ public:
     QString _file;
     QString _renameTarget;
 
+    /// The last X-Request-ID of the request that failled
+    QByteArray _requestId;
+
     bool isValid() const;
 };
 
 /** Represents a conflict in the conflicts table.
  *
- * In the following the "conflict file" is the file with the "_conflict-"
- * tag and the base file is the file that its a conflict for. So if
- * a/foo.txt is the base file, its conflict file could be
- * a/foo_conflict-1234.txt.
+ * In the following the "conflict file" is the file that has the conflict
+ * tag in the filename, and the base file is the file that it's a conflict for.
+ * So if "a/foo.txt" is the base file, its conflict file could be
+ * "a/foo (conflicted copy 1234).txt".
  */
 class OCSYNC_EXPORT ConflictRecord
 {
 public:
-    /** Path to the _conflict- file
-     *
-     * So if a/foo.txt has a conflict, this path would point to
-     * a/foo_conflict-1234.txt.
+    /** Path to the file with the conflict tag in the name
      *
      * The path is sync-folder relative.
      */
@@ -145,6 +140,17 @@ public:
      * may not be available and empty
      */
     QByteArray baseEtag;
+
+    /**
+     * The path of the original file at the time the conflict was created
+     *
+     * Note that in nearly all cases one should query the db by baseFileId and
+     * thus retrieve the *current* base path instead!
+     *
+     * maybe be empty if not available
+     */
+    QByteArray initialBasePath;
+
 
     bool isValid() const { return !path.isEmpty(); }
 };

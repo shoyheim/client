@@ -71,7 +71,7 @@ private slots:
         q.prepare(sql);
 
         q.exec();
-        while( q.next() ) {
+        while( q.next().hasData ) {
             qDebug() << "Name: " << q.stringValue(1);
             qDebug() << "Address: " << q.stringValue(2);
         }
@@ -83,7 +83,7 @@ private slots:
         q.prepare(sql);
         q.bindValue(1, 2);
         q.exec();
-        if( q.next() ) {
+        if( q.next().hasData ) {
             qDebug() << "Name:" << q.stringValue(1);
             qDebug() << "Address:" << q.stringValue(2);
         }
@@ -96,7 +96,7 @@ private slots:
         int rc = q.prepare(sql);
         qDebug() << "Pragma:" << rc;
         q.exec();
-        if( q.next() ) {
+        if( q.next().hasData ) {
             qDebug() << "P:" << q.stringValue(1);
         }
     }
@@ -118,12 +118,27 @@ private slots:
         SqlQuery q(_db);
         q.prepare(sql);
 
-        if(q.next()) {
+        if(q.next().hasData) {
             QString name = q.stringValue(1);
             QString address = q.stringValue(2);
             QVERIFY( name == QString::fromUtf8("пятницы") );
             QVERIFY( address == QString::fromUtf8("проспект"));
         }
+    }
+
+    void testDestructor()
+    {
+        // This test make sure that the destructor of SqlQuery works even if the SqlDatabase
+        // is destroyed before
+        QScopedPointer<SqlDatabase> db(new SqlDatabase());
+        SqlQuery q1(_db);
+        SqlQuery q2(_db);
+        q2.prepare("SELECT * FROM addresses");
+        SqlQuery q3("SELECT * FROM addresses", _db);
+        SqlQuery q4;
+        SqlQuery q5;
+        q5.initOrReset("SELECT * FROM addresses", _db);
+        db.reset();
     }
 
 private:

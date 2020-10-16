@@ -20,7 +20,9 @@
 
 #include "account.h"
 #include "accountstate.h"
+#include "application.h"
 #include "configfile.h"
+#include "settingsdialog.h"
 #include "theme.h"
 #include "thumbnailjob.h"
 
@@ -29,6 +31,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QFrame>
+#include <QRegularExpression>
 
 namespace OCC {
 
@@ -38,7 +41,7 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
     const QString &sharePath,
     const QString &localPath,
     SharePermissions maxSharingPermissions,
-    const QByteArray &numericFileId,
+    ShareDialogStartPage startPage,
     QWidget *parent)
     : QDialog(parent)
     , _ui(new Ui::ShareDialog)
@@ -46,10 +49,10 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
     , _sharePath(sharePath)
     , _localPath(localPath)
     , _maxSharingPermissions(maxSharingPermissions)
-    , _privateLinkUrl(accountState->account()->deprecatedPrivateLinkUrl(numericFileId).toString(QUrl::FullyEncoded))
-    , _linkWidget(NULL)
-    , _userGroupWidget(NULL)
-    , _progressIndicator(NULL)
+    , _startPage(startPage)
+    , _linkWidget(nullptr)
+    , _userGroupWidget(nullptr)
+    , _progressIndicator(nullptr)
 {
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     setAttribute(Qt::WA_DeleteOnClose);
@@ -79,8 +82,7 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
     }
 
     // Set filename
-    QFileInfo lPath(_localPath);
-    QString fileName = lPath.fileName();
+    QString fileName = QFileInfo(_sharePath).fileName();
     _ui->label_name->setText(tr("%1").arg(fileName));
     QFont f(_ui->label_name->font());
     f.setPointSize(f.pointSize() * 1.4);
@@ -90,19 +92,16 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
     QString ocDir(_sharePath);
     ocDir.truncate(ocDir.length() - fileName.length());
 
-    ocDir.replace(QRegExp("^/*"), "");
-    ocDir.replace(QRegExp("/*$"), "");
+    // remove leading and trailing spaces
+    ocDir.remove(QRegularExpression(QStringLiteral("^/*|/*$")));
 
-    // Laying this out is complex because sharePath
-    // may be in use or not.
-    _ui->gridLayout->removeWidget(_ui->label_sharePath);
-    _ui->gridLayout->removeWidget(_ui->label_name);
     if (ocDir.isEmpty()) {
-        _ui->gridLayout->addWidget(_ui->label_name, 0, 1, 2, 1);
+        _ui->label_name->setVisible(true);
+        _ui->label_sharePath->setVisible(false);
         _ui->label_sharePath->setText(QString());
     } else {
-        _ui->gridLayout->addWidget(_ui->label_name, 0, 1, 1, 1);
-        _ui->gridLayout->addWidget(_ui->label_sharePath, 1, 1, 1, 1);
+        _ui->label_name->setVisible(true);
+        _ui->label_sharePath->setVisible(true);
         _ui->label_sharePath->setText(tr("Folder: %2").arg(ocDir));
     }
 
@@ -113,6 +112,7 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
         label->setWordWrap(true);
         label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         layout()->replaceWidget(_ui->shareWidgets, label);
+        _ui->shareWidgets->hide();
         return;
     }
 
@@ -139,6 +139,9 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
     connect(job, &PropfindJob::result, this, &ShareDialog::slotPropfindReceived);
     connect(job, &PropfindJob::finishedWithError, this, &ShareDialog::slotPropfindError);
     job->start();
+
+    auto size = ocApp()->gui()->settingsDialog()->minimumSizeHint();
+    resize(size.width() - 50, size.height() - 50);
 }
 
 ShareDialog::~ShareDialog()
@@ -161,13 +164,9 @@ void ShareDialog::slotPropfindReceived(const QVariantMap &result)
         qCInfo(lcSharing) << "Received sharing permissions for" << _sharePath << _maxSharingPermissions;
     }
     auto privateLinkUrl = result["privatelink"].toString();
-    auto numericFileId = result["fileid"].toByteArray();
     if (!privateLinkUrl.isEmpty()) {
         qCInfo(lcSharing) << "Received private link url for" << _sharePath << privateLinkUrl;
         _privateLinkUrl = privateLinkUrl;
-    } else if (!numericFileId.isEmpty()) {
-        qCInfo(lcSharing) << "Received numeric file id for" << _sharePath << numericFileId;
-        _privateLinkUrl = _accountState->account()->deprecatedPrivateLinkUrl(numericFileId).toString(QUrl::FullyEncoded);
     }
 
     showSharingUi();
@@ -217,6 +216,9 @@ void ShareDialog::showSharingUi()
         _linkWidget->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Preferred);
         _ui->shareWidgets->addTab(_linkWidget, tr("Public Links"));
         _linkWidget->getShares();
+
+        if (_startPage == ShareDialogStartPage::PublicLinks)
+            _ui->shareWidgets->setCurrentWidget(_linkWidget);
     }
 }
 
@@ -239,11 +241,11 @@ void ShareDialog::slotAccountStateChanged(int state)
     bool enabled = (state == AccountState::State::Connected);
     qCDebug(lcSharing) << "Account connected?" << enabled;
 
-    if (_userGroupWidget != NULL) {
+    if (_userGroupWidget != nullptr) {
         _userGroupWidget->setEnabled(enabled);
     }
 
-    if (_linkWidget != NULL) {
+    if (_linkWidget != nullptr) {
         _linkWidget->setEnabled(enabled);
     }
 }

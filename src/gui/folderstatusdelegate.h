@@ -26,7 +26,6 @@ class FolderStatusDelegate : public QStyledItemDelegate
 {
     Q_OBJECT
 public:
-    QIcon m_moreIcon;
     FolderStatusDelegate();
 
     enum datarole { FolderAliasRole = Qt::UserRole + 100,
@@ -35,6 +34,7 @@ public:
         FolderSecondPathRole,
         FolderConflictMsg,
         FolderErrorMsg,
+        FolderInfoMsg,
         FolderSyncPaused,
         FolderStatusIconRole,
         FolderAccountConnected,
@@ -45,19 +45,20 @@ public:
         WarningCount,
         SyncRunning,
 
-        AddButton // 1 = enabled; 2 = disabled
+        AddButton, // 1 = enabled; 2 = disabled
+        FolderSyncText,
+        DataRoleCount
+
     };
-    void paint(QPainter *, const QStyleOptionViewItem &, const QModelIndex &) const Q_DECL_OVERRIDE;
-    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const Q_DECL_OVERRIDE;
-    bool editorEvent(QEvent *event, QAbstractItemModel *model, const QStyleOptionViewItem &option,
-        const QModelIndex &index) Q_DECL_OVERRIDE;
+    void paint(QPainter *, const QStyleOptionViewItem &, const QModelIndex &) const override;
+    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override;
 
 
     /**
      * return the position of the option button within the item
      */
     static QRect optionsButtonRect(QRect within, Qt::LayoutDirection direction);
-    static QRect errorsListRect(QRect within);
+    static QRect errorsListRect(QRect within, const QModelIndex &);
     static int rootFolderHeightWithoutErrors(const QFontMetrics &fm, const QFontMetrics &aliasFm);
 
 private:

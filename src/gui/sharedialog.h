@@ -17,6 +17,7 @@
 
 #include "accountstate.h"
 #include "sharepermissions.h"
+#include "owncloudgui.h"
 
 #include <QPointer>
 #include <QString>
@@ -43,12 +44,12 @@ public:
         const QString &sharePath,
         const QString &localPath,
         SharePermissions maxSharingPermissions,
-        const QByteArray &numericFileId,
-        QWidget *parent = 0);
-    ~ShareDialog();
+        ShareDialogStartPage startPage,
+        QWidget *parent);
+    ~ShareDialog() override;
 
 private slots:
-    void done(int r);
+    void done(int r) override;
     void slotPropfindReceived(const QVariantMap &result);
     void slotPropfindError();
     void slotThumbnailFetched(const int &statusCode, const QByteArray &reply);
@@ -64,6 +65,7 @@ private:
     SharePermissions _maxSharingPermissions;
     QByteArray _numericFileId;
     QString _privateLinkUrl;
+    ShareDialogStartPage _startPage;
 
     ShareLinkWidget *_linkWidget;
     ShareUserGroupWidget *_userGroupWidget;

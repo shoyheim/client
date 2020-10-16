@@ -16,11 +16,13 @@
 #ifndef MIRALL_CREDS_HTTP_CREDENTIALS_H
 #define MIRALL_CREDS_HTTP_CREDENTIALS_H
 
+#include "creds/abstractcredentials.h"
+#include "networkjobs.h"
+
 #include <QMap>
 #include <QSslCertificate>
 #include <QSslKey>
 #include <QNetworkRequest>
-#include "creds/abstractcredentials.h"
 
 class QNetworkReply;
 class QAuthenticator;
@@ -79,20 +81,24 @@ public:
     /// Don't add credentials if this is set on a QNetworkRequest
     static constexpr QNetworkRequest::Attribute DontAddCredentialsAttribute = QNetworkRequest::User;
 
-    explicit HttpCredentials();
-    HttpCredentials(const QString &user, const QString &password, const QSslCertificate &certificate = QSslCertificate(), const QSslKey &key = QSslKey());
+    HttpCredentials(DetermineAuthTypeJob::AuthType authType)
+        : _authType(authType)
+    {
+    }
+    explicit HttpCredentials(DetermineAuthTypeJob::AuthType authType, const QString &user, const QString &password,
+            const QByteArray &clientCertBundle = QByteArray(), const QByteArray &clientCertPassword = QByteArray());
 
-    QString authType() const Q_DECL_OVERRIDE;
-    QNetworkAccessManager *createQNAM() const Q_DECL_OVERRIDE;
-    bool ready() const Q_DECL_OVERRIDE;
-    void fetchFromKeychain() Q_DECL_OVERRIDE;
-    bool stillValid(QNetworkReply *reply) Q_DECL_OVERRIDE;
-    void persist() Q_DECL_OVERRIDE;
-    QString user() const Q_DECL_OVERRIDE;
+    QString authType() const override;
+    QNetworkAccessManager *createQNAM() const override;
+    bool ready() const override;
+    void fetchFromKeychain() override;
+    bool stillValid(QNetworkReply *reply) override;
+    void persist() override;
+    QString user() const override;
     // the password or token
     QString password() const;
-    void invalidateToken() Q_DECL_OVERRIDE;
-    void forgetSensitiveData() Q_DECL_OVERRIDE;
+    void invalidateToken() override;
+    void forgetSensitiveData() override;
     QString fetchUser();
     virtual bool sslIsTrusted() { return false; }
 
@@ -102,20 +108,28 @@ public:
     bool refreshAccessToken();
 
     // To fetch the user name as early as possible
-    void setAccount(Account *account) Q_DECL_OVERRIDE;
+    void setAccount(Account *account) override;
 
     // Whether we are using OAuth
-    bool isUsingOAuth() const { return !_refreshToken.isNull(); }
+    bool isUsingOAuth() const { return _authType == DetermineAuthTypeJob::AuthType::OAuth; }
+
+    bool retryIfNeeded(AbstractNetworkJob *) override;
 
 private Q_SLOTS:
     void slotAuthentication(QNetworkReply *, QAuthenticator *);
 
+    void slotReadClientCertPasswordJobDone(QKeychain::Job *);
     void slotReadClientCertPEMJobDone(QKeychain::Job *);
     void slotReadClientKeyPEMJobDone(QKeychain::Job *);
+
+    void slotReadPasswordFromKeychain();
     void slotReadJobDone(QKeychain::Job *);
 
-    void slotWriteClientCertPEMJobDone();
-    void slotWriteClientKeyPEMJobDone();
+    void slotWriteClientCertPasswordJobDone(QKeychain::Job *);
+    void slotWriteClientCertPEMJobDone(QKeychain::Job *);
+    void slotWriteClientKeyPEMJobDone(QKeychain::Job *);
+
+    void slotWritePasswordToKeychain();
     void slotWriteJobDone(QKeychain::Job *);
 
 protected:
@@ -131,16 +145,40 @@ protected:
     /// Wipes legacy keychain locations
     void deleteOldKeychainEntries();
 
+    /** Whether to bow out now because a retry will happen later
+     *
+     * Sometimes the keychain needs a while to become available.
+     * This function should be called on first keychain-read to check
+     * whether it errored because the keychain wasn't available yet.
+     * If that happens, this function will schedule another try and
+     * return true.
+     */
+    bool keychainUnavailableRetryLater(QKeychain::Job *);
+
+    /** Takes client cert pkcs12 and unwraps the key/cert.
+     *
+     * Returns false on failure.
+     */
+    bool unpackClientCertBundle();
+
     QString _user;
     QString _password; // user's password, or access_token for OAuth
     QString _refreshToken; // OAuth _refreshToken, set if OAuth is used.
     QString _previousPassword;
 
     QString _fetchErrorString;
-    bool _ready;
+    bool _ready = false;
+    bool _isRenewingOAuthToken = false;
+    QByteArray _clientCertBundle;
+    QByteArray _clientCertPassword;
     QSslKey _clientSslKey;
     QSslCertificate _clientSslCertificate;
-    bool _keychainMigration;
+    bool _keychainMigration = false;
+    bool _retryOnKeyChainError = true; // true if we haven't done yet any reading from keychain
+
+    DetermineAuthTypeJob::AuthType _authType = DetermineAuthTypeJob::AuthType::Unknown;
+
+    QVector<QPointer<AbstractNetworkJob>> _retryQueue; // Jobs we need to retry once the auth token is fetched
 };
 
 

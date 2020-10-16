@@ -32,12 +32,10 @@ class OWNCLOUDSYNC_EXPORT AccessManager : public QNetworkAccessManager
     Q_OBJECT
 
 public:
-    AccessManager(QObject *parent = 0);
-
-    void setRawCookie(const QByteArray &rawCookie, const QUrl &url);
+    AccessManager(QObject *parent = nullptr);
 
 protected:
-    QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = 0) Q_DECL_OVERRIDE;
+    QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = nullptr) override;
 };
 
 } // namespace OCC

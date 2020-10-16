@@ -17,14 +17,19 @@
  */
 
 #include "asserts.h"
+#include "utility.h"
+
+#include <comdef.h>
+#include <shlguid.h>
 #include <shlobj.h>
+#include <string>
 #include <winbase.h>
 #include <windows.h>
 #include <winerror.h>
-#include <shlguid.h>
-#include <string>
+
 #include <QLibrary>
 
+static const char systemRunPathC[] = "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const char runPathC[] = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 namespace OCC {
@@ -67,6 +72,12 @@ static void setupFavLink_private(const QString &folder)
         qCWarning(lcUtility) << "linking" << folder << "to" << linkName << "failed!";
 }
 
+bool hasSystemLaunchOnStartup_private(const QString &appName)
+{
+    QString runPath = QLatin1String(systemRunPathC);
+    QSettings settings(runPath, QSettings::NativeFormat);
+    return settings.contains(appName);
+}
 
 bool hasLaunchOnStartup_private(const QString &appName)
 {
@@ -81,7 +92,7 @@ void setLaunchOnStartup_private(const QString &appName, const QString &guiName, 
     QString runPath = QLatin1String(runPathC);
     QSettings settings(runPath, QSettings::NativeFormat);
     if (enable) {
-        settings.setValue(appName, QCoreApplication::applicationFilePath().replace('/', '\\'));
+        settings.setValue(appName, QCoreApplication::applicationFilePath().replace(QLatin1Char('/'), QLatin1Char('\\')));
     } else {
         settings.remove(appName);
     }
@@ -100,13 +111,13 @@ QVariant Utility::registryGetKeyValue(HKEY hRootKey, const QString &subKey, cons
 
     REGSAM sam = KEY_READ | KEY_WOW64_64KEY;
     LONG result = RegOpenKeyEx(hRootKey, reinterpret_cast<LPCWSTR>(subKey.utf16()), 0, sam, &hKey);
-    ASSERT(result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND);
+    OC_ASSERT(result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND);
     if (result != ERROR_SUCCESS)
         return value;
 
     DWORD type = 0, sizeInBytes = 0;
     result = RegQueryValueEx(hKey, reinterpret_cast<LPCWSTR>(valueName.utf16()), 0, &type, nullptr, &sizeInBytes);
-    ASSERT(result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND);
+    OC_ASSERT(result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND);
     if (result == ERROR_SUCCESS) {
         switch (type) {
         case REG_DWORD:
@@ -128,7 +139,7 @@ QVariant Utility::registryGetKeyValue(HKEY hRootKey, const QString &subKey, cons
                 // If the data has the REG_SZ, REG_MULTI_SZ or REG_EXPAND_SZ type, the string may not have been stored with
                 // the proper terminating null characters. Therefore, even if the function returns ERROR_SUCCESS,
                 // the application should ensure that the string is properly terminated before using it; otherwise, it may overwrite a buffer.
-                if (string.at(newCharSize - 1) == QChar('\0'))
+                if (string.at(newCharSize - 1) == QLatin1Char('\0'))
                     string.resize(newCharSize - 1);
                 value = string;
             }
@@ -138,7 +149,7 @@ QVariant Utility::registryGetKeyValue(HKEY hRootKey, const QString &subKey, cons
             Q_UNREACHABLE();
         }
     }
-    ASSERT(result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND);
+    OC_ASSERT(result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND);
 
     RegCloseKey(hKey);
     return value;
@@ -153,7 +164,7 @@ bool Utility::registrySetKeyValue(HKEY hRootKey, const QString &subKey, const QS
     // FIXME: Not doing so at the moment means that explorer will show the cloud provider, but 32bit processes' open dialogs (like the ownCloud client itself) won't show it.
     REGSAM sam = KEY_WRITE | KEY_WOW64_64KEY;
     LONG result = RegCreateKeyEx(hRootKey, reinterpret_cast<LPCWSTR>(subKey.utf16()), 0, nullptr, 0, sam, nullptr, &hKey, nullptr);
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
     if (result != ERROR_SUCCESS)
         return false;
 
@@ -173,7 +184,7 @@ bool Utility::registrySetKeyValue(HKEY hRootKey, const QString &subKey, const QS
     default:
         Q_UNREACHABLE();
     }
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
 
     RegCloseKey(hKey);
     return result == ERROR_SUCCESS;
@@ -184,16 +195,16 @@ bool Utility::registryDeleteKeyTree(HKEY hRootKey, const QString &subKey)
     HKEY hKey;
     REGSAM sam = DELETE | KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_64KEY;
     LONG result = RegOpenKeyEx(hRootKey, reinterpret_cast<LPCWSTR>(subKey.utf16()), 0, sam, &hKey);
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
     if (result != ERROR_SUCCESS)
         return false;
 
     result = RegDeleteTree(hKey, nullptr);
     RegCloseKey(hKey);
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
 
     result |= RegDeleteKeyEx(hRootKey, reinterpret_cast<LPCWSTR>(subKey.utf16()), sam, 0);
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
 
     return result == ERROR_SUCCESS;
 }
@@ -203,12 +214,12 @@ bool Utility::registryDeleteKeyValue(HKEY hRootKey, const QString &subKey, const
     HKEY hKey;
     REGSAM sam = KEY_WRITE | KEY_WOW64_64KEY;
     LONG result = RegOpenKeyEx(hRootKey, reinterpret_cast<LPCWSTR>(subKey.utf16()), 0, sam, &hKey);
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
     if (result != ERROR_SUCCESS)
         return false;
 
     result = RegDeleteValue(hKey, reinterpret_cast<LPCWSTR>(valueName.utf16()));
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
 
     RegCloseKey(hKey);
     return result == ERROR_SUCCESS;
@@ -219,14 +230,14 @@ bool Utility::registryWalkSubKeys(HKEY hRootKey, const QString &subKey, const st
     HKEY hKey;
     REGSAM sam = KEY_READ | KEY_WOW64_64KEY;
     LONG result = RegOpenKeyEx(hRootKey, reinterpret_cast<LPCWSTR>(subKey.utf16()), 0, sam, &hKey);
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
     if (result != ERROR_SUCCESS)
         return false;
 
     DWORD maxSubKeyNameSize;
     // Get the largest keyname size once instead of relying each call on ERROR_MORE_DATA.
     result = RegQueryInfoKey(hKey, nullptr, nullptr, nullptr, nullptr, &maxSubKeyNameSize, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-    ASSERT(result == ERROR_SUCCESS);
+    OC_ASSERT(result == ERROR_SUCCESS);
     if (result != ERROR_SUCCESS) {
         RegCloseKey(hKey);
         return false;
@@ -243,7 +254,7 @@ bool Utility::registryWalkSubKeys(HKEY hRootKey, const QString &subKey, const st
         DWORD subKeyNameSize = subKeyName.size();
         retCode = RegEnumKeyEx(hKey, i, reinterpret_cast<LPWSTR>(subKeyName.data()), &subKeyNameSize, nullptr, nullptr, nullptr, nullptr);
 
-        ASSERT(result == ERROR_SUCCESS || retCode == ERROR_NO_MORE_ITEMS);
+        OC_ASSERT(result == ERROR_SUCCESS || retCode == ERROR_NO_MORE_ITEMS);
         if (retCode == ERROR_SUCCESS) {
             // subKeyNameSize excludes the trailing \0
             subKeyName.resize(subKeyNameSize);
@@ -254,6 +265,32 @@ bool Utility::registryWalkSubKeys(HKEY hRootKey, const QString &subKey, const st
 
     RegCloseKey(hKey);
     return retCode != ERROR_NO_MORE_ITEMS;
+}
+
+void Utility::UnixTimeToFiletime(time_t t, FILETIME *filetime)
+{
+    LONGLONG ll = Int32x32To64(t, 10000000) + 116444736000000000;
+    filetime->dwLowDateTime = (DWORD) ll;
+    filetime->dwHighDateTime = ll >>32;
+}
+
+void Utility::FiletimeToLargeIntegerFiletime(FILETIME *filetime, LARGE_INTEGER *hundredNSecs)
+{
+    hundredNSecs->LowPart = filetime->dwLowDateTime;
+    hundredNSecs->HighPart = filetime->dwHighDateTime;
+}
+
+void Utility::UnixTimeToLargeIntegerFiletime(time_t t, LARGE_INTEGER *hundredNSecs)
+{
+    LONGLONG ll = Int32x32To64(t, 10000000) + 116444736000000000;
+    hundredNSecs->LowPart = (DWORD) ll;
+    hundredNSecs->HighPart = ll >>32;
+}
+
+
+QString Utility::formatWinError(long errorCode)
+{
+    return QStringLiteral("WindowsError: %1: %2").arg(QString::number(errorCode), QString::fromWCharArray(_com_error(errorCode).ErrorMessage()));
 }
 
 } // namespace OCC

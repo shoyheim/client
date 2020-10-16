@@ -97,7 +97,7 @@ QString Utility::formatFingerprint(const QByteArray &fmhash, bool colonSeparated
 
     QString fp = QString::fromLatin1(hash.trimmed());
     if (colonSeparated) {
-        fp.replace(QChar(' '), QChar(':'));
+        fp.replace(QLatin1Char(' '), QLatin1Char(':'));
     }
 
     return fp;
@@ -170,24 +170,31 @@ static QLatin1String platform()
 #elif defined(Q_OS_SOLARIS)
     return QLatin1String("Solaris");
 #else
-    return QLatin1String("Unknown OS");
+    return QSysInfo::productType();
 #endif
 }
 
 QByteArray Utility::userAgentString()
 {
-    QString re = QString::fromLatin1("Mozilla/5.0 (%1) mirall/%2")
-                     .arg(platform(), QLatin1String(MIRALL_VERSION_STRING));
+    return QStringLiteral("Mozilla/5.0 (%1) mirall/%2 (%3, %4-%5 ClientArchitecture: %6 OsArchitecture: %7)")
+        .arg(platform(),
+            QStringLiteral(MIRALL_VERSION_STRING),
+            qApp->applicationName(),
+            QSysInfo::productType(),
+            QSysInfo::kernelVersion(),
+            QSysInfo::buildCpuArchitecture(),
+            QSysInfo::currentCpuArchitecture())
+        .toLatin1();
+}
 
-    QLatin1String appName(APPLICATION_SHORTNAME);
-
-    // this constant "ownCloud" is defined in the default OEM theming
-    // that is used for the standard client. If it is changed there,
-    // it needs to be adjusted here.
-    if (appName != QLatin1String("ownCloud")) {
-        re += QString(" (%1)").arg(appName);
-    }
-    return re.toLatin1();
+bool Utility::hasSystemLaunchOnStartup(const QString &appName)
+{
+#if defined(Q_OS_WIN)
+    return hasSystemLaunchOnStartup_private(appName);
+#else
+    Q_UNUSED(appName)
+    return false;
+#endif
 }
 
 bool Utility::hasLaunchOnStartup(const QString &appName)
@@ -227,7 +234,7 @@ QString Utility::compactFormatDouble(double value, int prec, const QString &unit
     QLocale locale = QLocale::system();
     QChar decPoint = locale.decimalPoint();
     QString str = locale.toString(value, 'f', prec);
-    while (str.endsWith('0') || str.endsWith(decPoint)) {
+    while (str.endsWith(QLatin1Char('0')) || str.endsWith(decPoint)) {
         if (str.endsWith(decPoint)) {
             str.chop(1);
             break;
@@ -254,15 +261,17 @@ void Utility::usleep(int usec)
     QThread::usleep(usec);
 }
 
-bool Utility::fsCasePreserving()
-{
-#ifdef WITH_TESTING
+// This can be overriden from the tests
+OCSYNC_EXPORT bool fsCasePreserving_override = []()-> bool {
     QByteArray env = qgetenv("OWNCLOUD_TEST_CASE_PRESERVING");
     if (!env.isEmpty())
         return env.toInt();
-#endif
+    return Utility::isWindows() || Utility::isMac();
+}();
 
-    return isWindows() || isMac();
+bool Utility::fsCasePreserving()
+{
+    return fsCasePreserving_override;
 }
 
 bool Utility::fileNamesEqual(const QString &fn1, const QString &fn2)
@@ -296,7 +305,7 @@ namespace {
 
         QString description(quint64 value) const
         {
-            return QCoreApplication::translate("Utility", name, 0, value);
+            return QCoreApplication::translate("Utility", name, nullptr, value);
         }
     };
 // QTBUG-3945 and issue #4855: QT_TRANSLATE_NOOP does not work with plural form because lupdate
@@ -311,7 +320,7 @@ namespace {
         { QT_TRANSLATE_NOOP("Utility", "%n hour(s)", 0, _), 3600 * 1000LL },
         { QT_TRANSLATE_NOOP("Utility", "%n minute(s)", 0, _), 60 * 1000LL },
         { QT_TRANSLATE_NOOP("Utility", "%n second(s)", 0, _), 1000LL },
-        { 0, 0 }
+        { nullptr, 0 }
     };
 } // anonymous namespace
 
@@ -352,7 +361,7 @@ QString Utility::fileNameForGuiUse(const QString &fName)
 {
     if (isMac()) {
         QString n(fName);
-        return n.replace(QChar(':'), QChar('/'));
+        return n.replace(QLatin1Char(':'), QLatin1Char('/'));
     }
     return fName;
 }
@@ -390,7 +399,7 @@ QString Utility::platformName()
 
 void Utility::crash()
 {
-    volatile int *a = (int *)(NULL);
+    volatile int *a = (int *)nullptr;
     *a = 1;
 }
 
@@ -410,12 +419,12 @@ QByteArray Utility::versionOfInstalledBinary(const QString &command)
             binary = qApp->arguments()[0];
         }
         QStringList params;
-        params << QLatin1String("--version");
+        params << QStringLiteral("--version");
         QProcess process;
         process.start(binary, params);
         process.waitForFinished(); // sets current thread to sleep and waits for pingProcess end
         re = process.readAllStandardOutput();
-        int newline = re.indexOf(QChar('\n'));
+        int newline = re.indexOf('\n');
         if (newline > 0) {
             re.truncate(newline);
         }
@@ -527,10 +536,10 @@ QUrl Utility::concatUrlPath(const QUrl &url, const QString &concatPath,
     QString path = url.path();
     if (!concatPath.isEmpty()) {
         // avoid '//'
-        if (path.endsWith('/') && concatPath.startsWith('/')) {
+        if (path.endsWith(QLatin1Char('/')) && concatPath.startsWith(QLatin1Char('/'))) {
             path.chop(1);
         } // avoid missing '/'
-        else if (!path.endsWith('/') && !concatPath.startsWith('/')) {
+        else if (!path.endsWith(QLatin1Char('/')) && !concatPath.startsWith(QLatin1Char('/'))) {
             path += QLatin1Char('/');
         }
         path += concatPath; // put the complete path together
@@ -542,18 +551,27 @@ QUrl Utility::concatUrlPath(const QUrl &url, const QString &concatPath,
     return tmpUrl;
 }
 
-QString Utility::makeConflictFileName(const QString &fn, const QDateTime &dt)
+QString Utility::makeConflictFileName(
+    const QString &fn, const QDateTime &dt, const QString &user)
 {
     QString conflictFileName(fn);
-    // Add _conflict-XXXX  before the extension.
-    int dotLocation = conflictFileName.lastIndexOf('.');
+    // Add conflict tag before the extension.
+    int dotLocation = conflictFileName.lastIndexOf(QLatin1Char('.'));
     // If no extension, add it at the end  (take care of cases like foo/.hidden or foo.bar/file)
-    if (dotLocation <= conflictFileName.lastIndexOf('/') + 1) {
+    if (dotLocation <= conflictFileName.lastIndexOf(QLatin1Char('/')) + 1) {
         dotLocation = conflictFileName.size();
     }
-    QString timeString = dt.toString("yyyyMMdd-hhmmss");
 
-    conflictFileName.insert(dotLocation, "_conflict-" + timeString);
+    QString conflictMarker = QStringLiteral(" (conflicted copy ");
+    if (!user.isEmpty()) {
+        // Don't allow parens in the user name, to ensure
+        // we can find the beginning and end of the conflict tag.
+        const auto userName = sanitizeForFileName(user).replace(QLatin1Char('('), QLatin1Char('_')).replace(QLatin1Char(')'), QLatin1Char('_'));;
+        conflictMarker += userName + QLatin1Char(' ');
+    }
+    conflictMarker += dt.toString(QStringLiteral("yyyy-MM-dd hhmmss")) + QLatin1Char(')');
+
+    conflictFileName.insert(dotLocation, conflictMarker);
     return conflictFileName;
 }
 
@@ -566,33 +584,73 @@ bool Utility::isConflictFile(const char *name)
         bname = name;
     }
 
-    return std::strstr(bname, "_conflict-");
+    // Old pattern
+    if (std::strstr(bname, "_conflict-"))
+        return true;
+
+    // New pattern
+    if (std::strstr(bname, "(conflicted copy"))
+        return true;
+
+    return false;
 }
 
 bool Utility::isConflictFile(const QString &name)
 {
-    auto bname = name.midRef(name.lastIndexOf('/') + 1);
-    return bname.contains("_conflict-", Utility::fsCasePreserving() ? Qt::CaseInsensitive : Qt::CaseSensitive);
+    auto bname = name.midRef(name.lastIndexOf(QLatin1Char('/')) + 1);
+
+    if (bname.contains(QStringLiteral("_conflict-")))
+        return true;
+
+    if (bname.contains(QStringLiteral("(conflicted copy")))
+        return true;
+
+    return false;
 }
 
-QByteArray Utility::conflictFileBaseName(const QByteArray &conflictName)
+QByteArray Utility::conflictFileBaseNameFromPattern(const QByteArray &conflictName)
 {
     // This function must be able to deal with conflict files for conflict files.
     // To do this, we scan backwards, for the outermost conflict marker and
     // strip only that to generate the conflict file base name.
-    int from = conflictName.size();
-    while (from != -1) {
-        auto start = conflictName.lastIndexOf("_conflict-", from);
-        if (start == -1)
-            return "";
-        from = start - 1;
+    auto startOld = conflictName.lastIndexOf("_conflict-");
 
-        auto end = conflictName.indexOf('.', start);
-        if (end == -1)
-            end = conflictName.size();
-        return conflictName.left(start) + conflictName.mid(end);
+    // A single space before "(conflicted copy" is considered part of the tag
+    auto startNew = conflictName.lastIndexOf("(conflicted copy");
+    if (startNew > 0 && conflictName[startNew - 1] == ' ')
+        startNew -= 1;
+
+    // The rightmost tag is relevant
+    auto tagStart = qMax(startOld, startNew);
+    if (tagStart == -1)
+        return "";
+
+    // Find the end of the tag
+    auto tagEnd = conflictName.size();
+    auto dot = conflictName.lastIndexOf('.'); // dot could be part of user name for new tag!
+    if (dot > tagStart)
+        tagEnd = dot;
+    if (tagStart == startNew) {
+        auto paren = conflictName.indexOf(')', tagStart);
+        if (paren != -1)
+            tagEnd = paren + 1;
     }
-    return "";
+    return conflictName.left(tagStart) + conflictName.mid(tagEnd);
+}
+
+QString Utility::sanitizeForFileName(const QString &name)
+{
+    const auto invalid = QStringLiteral("/?<>\\:*|\"");
+    QString result;
+    result.reserve(name.size());
+    for (const auto c : name) {
+        if (!invalid.contains(c)
+            && c.category() != QChar::Other_Control
+            && c.category() != QChar::Other_Format) {
+            result.append(c);
+        }
+    }
+    return result;
 }
 
 } // namespace OCC

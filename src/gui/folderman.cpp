@@ -29,30 +29,33 @@
 #ifdef Q_OS_MAC
 #include <CoreServices/CoreServices.h>
 #endif
-#ifdef Q_OS_WIN
-#include <shlobj.h>
-#endif
 
 #include <QMessageBox>
 #include <QtCore>
 #include <QMutableSetIterator>
 #include <QSet>
+#include <QNetworkProxy>
+
+static const char versionC[] = "version";
+static const int maxFoldersVersion = 1;
 
 namespace OCC {
 
 Q_LOGGING_CATEGORY(lcFolderMan, "gui.folder.manager", QtInfoMsg)
 
-FolderMan *FolderMan::_instance = 0;
+FolderMan *FolderMan::_instance = nullptr;
 
 FolderMan::FolderMan(QObject *parent)
     : QObject(parent)
-    , _currentSyncFolder(0)
+    , _currentSyncFolder(nullptr)
     , _syncEnabled(true)
     , _lockWatcher(new LockWatcher)
+#ifdef Q_OS_WIN
     , _navigationPaneHelper(this)
+#endif
     , _appRestartRequired(false)
 {
-    ASSERT(!_instance);
+    OC_ASSERT(!_instance);
     _instance = this;
 
     _socketApi.reset(new SocketApi);
@@ -89,12 +92,17 @@ FolderMan *FolderMan::instance()
 FolderMan::~FolderMan()
 {
     qDeleteAll(_folderMap);
-    _instance = 0;
+    _instance = nullptr;
 }
 
-OCC::Folder::Map FolderMan::map()
+const OCC::Folder::Map &FolderMan::map() const
 {
     return _folderMap;
+}
+
+QList<Folder *> FolderMan::list() const
+{
+    return _folderMap.values();
 }
 
 void FolderMan::unloadFolder(Folder *f)
@@ -134,10 +142,10 @@ int FolderMan::unloadAndDeleteAllFolders()
         delete f;
         cnt++;
     }
-    ASSERT(_folderMap.isEmpty());
+    OC_ASSERT(_folderMap.isEmpty());
 
-    _lastSyncFolder = 0;
-    _currentSyncFolder = 0;
+    _lastSyncFolder = nullptr;
+    _currentSyncFolder = nullptr;
     _scheduledFolders.clear();
     emit folderListChanged(_folderMap);
     emit scheduleQueueChanged();
@@ -161,6 +169,12 @@ int FolderMan::setupFolders()
 {
     unloadAndDeleteAllFolders();
 
+    QStringList skipSettingsKeys, deleteSettingsKeys;
+    backwardMigrationSettingsKeys(&deleteSettingsKeys, &skipSettingsKeys);
+    // deleteKeys should already have been deleted on application startup.
+    // We ignore them here just in case.
+    skipSettingsKeys += deleteSettingsKeys;
+
     auto settings = ConfigFile::settingsWithGroup(QLatin1String("Accounts"));
     const auto accountsWithSettings = settings->childGroups();
     if (accountsWithSettings.isEmpty()) {
@@ -180,14 +194,24 @@ int FolderMan::setupFolders()
         }
         settings->beginGroup(id);
 
-        settings->beginGroup(QLatin1String("Folders"));
-        setupFoldersHelper(*settings, account, true);
-        settings->endGroup();
+        // The "backwardsCompatible" flag here is related to migrating old
+        // database locations
+        auto process = [&](const QString &groupName, bool backwardsCompatible, bool foldersWithPlaceholders) {
+            settings->beginGroup(groupName);
+            if (skipSettingsKeys.contains(settings->group())) {
+                // Should not happen: bad container keys should have been deleted
+                qCWarning(lcFolderMan) << "Folder structure" << groupName << "is too new, ignoring";
+            } else {
+                setupFoldersHelper(*settings, account, skipSettingsKeys, backwardsCompatible, foldersWithPlaceholders);
+            }
+            settings->endGroup();
+        };
 
-        // See Folder::saveToSettings for details about why this exists.
-        settings->beginGroup(QLatin1String("Multifolders"));
-        setupFoldersHelper(*settings, account, false);
-        settings->endGroup();
+        process(QStringLiteral("Folders"), true, false);
+
+        // See Folder::saveToSettings for details about why these exists.
+        process(QStringLiteral("Multifolders"), false, false);
+        process(QStringLiteral("FoldersWithPlaceholders"), false, true);
 
         settings->endGroup(); // <account>
     }
@@ -197,10 +221,21 @@ int FolderMan::setupFolders()
     return _folderMap.size();
 }
 
-void FolderMan::setupFoldersHelper(QSettings &settings, AccountStatePtr account, bool backwardsCompatible)
+void FolderMan::setupFoldersHelper(QSettings &settings, AccountStatePtr account, const QStringList &ignoreKeys, bool backwardsCompatible, bool foldersWithPlaceholders)
 {
     foreach (const auto &folderAlias, settings.childGroups()) {
+        // Skip folders with too-new version
+        settings.beginGroup(folderAlias);
+        if (ignoreKeys.contains(settings.group())) {
+            qCInfo(lcFolderMan) << "Folder" << folderAlias << "is too new, ignoring";
+            _additionalBlockedFolderAliases.insert(folderAlias);
+            settings.endGroup();
+            continue;
+        }
+        settings.endGroup();
+
         FolderDefinition folderDefinition;
+        settings.beginGroup(folderAlias);
         if (FolderDefinition::load(settings, folderAlias, &folderDefinition)) {
             auto defaultJournalPath = folderDefinition.defaultJournalPath(account->account());
 
@@ -209,12 +244,13 @@ void FolderMan::setupFoldersHelper(QSettings &settings, AccountStatePtr account,
                 folderDefinition.journalPath = defaultJournalPath;
             }
 
-            // Migration: ._ files sometimes don't work
-            // So if the configured journalPath is the default one ("._sync_*.db")
+            // Migration: ._ files sometimes can't be created.
+            // So if the configured journalPath has a dot-underscore ("._sync_*.db")
             // but the current default doesn't have the underscore, switch to the
-            // new default. See SyncJournalDb::makeDbName().
+            // new default if no db exists yet.
             if (folderDefinition.journalPath.startsWith("._sync_")
-                && defaultJournalPath.startsWith(".sync_")) {
+                && defaultJournalPath.startsWith(".sync_")
+                && !QFile::exists(folderDefinition.absoluteJournalPath())) {
                 folderDefinition.journalPath = defaultJournalPath;
             }
 
@@ -223,16 +259,33 @@ void FolderMan::setupFoldersHelper(QSettings &settings, AccountStatePtr account,
                 SyncJournalDb::maybeMigrateDb(folderDefinition.localPath, folderDefinition.absoluteJournalPath());
             }
 
-            Folder *f = addFolderInternal(std::move(folderDefinition), account.data());
+            auto vfs = createVfsFromPlugin(folderDefinition.virtualFilesMode);
+            if (!vfs) {
+                // TODO: Must do better error handling
+                qFatal("Could not load plugin");
+            }
+
+            Folder *f = addFolderInternal(std::move(folderDefinition), account.data(), std::move(vfs));
             if (f) {
-                // Migration: Mark folders that shall be saved in a backwards-compatible way
-                if (backwardsCompatible) {
-                    f->setSaveBackwardsCompatible(true);
+                // Migrate the old "usePlaceholders" setting to the root folder pin state
+                if (settings.value(QLatin1String(versionC), 1).toInt() == 1
+                    && settings.value(QLatin1String("usePlaceholders"), false).toBool()) {
+                    qCInfo(lcFolderMan) << "Migrate: From usePlaceholders to PinState::OnlineOnly";
+                    f->setRootPinState(PinState::OnlineOnly);
+                    settings.remove(QStringLiteral("usePlaceholders"));
                 }
+
+                // Migration: Mark folders that shall be saved in a backwards-compatible way
+                if (backwardsCompatible)
+                    f->setSaveBackwardsCompatible(true);
+                if (foldersWithPlaceholders)
+                    f->setSaveInFoldersWithPlaceholders();
+
                 scheduleFolder(f);
                 emit folderSyncStateChange(f);
             }
         }
+        settings.endGroup();
     }
 }
 
@@ -265,12 +318,43 @@ int FolderMan::setupFoldersMigration()
     return _folderMap.size();
 }
 
+void FolderMan::backwardMigrationSettingsKeys(QStringList *deleteKeys, QStringList *ignoreKeys)
+{
+    auto settings = ConfigFile::settingsWithGroup(QLatin1String("Accounts"));
+
+    auto processSubgroup = [&](const QString &name) {
+        settings->beginGroup(name);
+        const int foldersVersion = settings->value(QLatin1String(versionC), 1).toInt();
+        if (foldersVersion <= maxFoldersVersion) {
+            foreach (const auto &folderAlias, settings->childGroups()) {
+                settings->beginGroup(folderAlias);
+                const int folderVersion = settings->value(QLatin1String(versionC), 1).toInt();
+                if (folderVersion > FolderDefinition::maxSettingsVersion()) {
+                    ignoreKeys->append(settings->group());
+                }
+                settings->endGroup();
+            }
+        } else {
+            deleteKeys->append(settings->group());
+        }
+        settings->endGroup();
+    };
+
+    for (const auto &accountId : settings->childGroups()) {
+        settings->beginGroup(accountId);
+        processSubgroup("Folders");
+        processSubgroup("Multifolders");
+        processSubgroup("FoldersWithPlaceholders");
+        settings->endGroup();
+    }
+}
+
 bool FolderMan::ensureJournalGone(const QString &journalDbFile)
 {
     // remove the old journal file
     while (QFile::exists(journalDbFile) && !QFile::remove(journalDbFile)) {
         qCWarning(lcFolderMan) << "Could not remove old db file at" << journalDbFile;
-        int ret = QMessageBox::warning(0, tr("Could not reset folder state"),
+        int ret = QMessageBox::warning(nullptr, tr("Could not reset folder state"),
             tr("An old sync journal '%1' was found, "
                "but could not be removed. Please make sure "
                "that no application is currently using it.")
@@ -345,7 +429,7 @@ QString FolderMan::unescapeAlias(const QString &alias)
 // WARNING: Do not remove this code, it is used for predefined/automated deployments (2016)
 Folder *FolderMan::setupFolderFromOldConfigFile(const QString &file, AccountState *accountState)
 {
-    Folder *folder = 0;
+    Folder *folder = nullptr;
 
     qCInfo(lcFolderMan) << "  ` -> setting up:" << file;
     QString escapedAlias(file);
@@ -386,7 +470,7 @@ Folder *FolderMan::setupFolderFromOldConfigFile(const QString &file, AccountStat
 
     if (backend.isEmpty() || backend != QLatin1String("owncloud")) {
         qCWarning(lcFolderMan) << "obsolete configuration of type" << backend;
-        return 0;
+        return nullptr;
     }
 
     // cut off the leading slash, oCUrl always has a trailing.
@@ -396,7 +480,7 @@ Folder *FolderMan::setupFolderFromOldConfigFile(const QString &file, AccountStat
 
     if (!accountState) {
         qCCritical(lcFolderMan) << "can't create folder without an account";
-        return 0;
+        return nullptr;
     }
 
     FolderDefinition folderDefinition;
@@ -406,7 +490,7 @@ Folder *FolderMan::setupFolderFromOldConfigFile(const QString &file, AccountStat
     folderDefinition.paused = paused;
     folderDefinition.ignoreHiddenFiles = ignoreHiddenFiles();
 
-    folder = addFolderInternal(folderDefinition, accountState);
+    folder = addFolderInternal(folderDefinition, accountState, std::make_unique<VfsOff>());
     if (folder) {
         QStringList blackList = settings.value(QLatin1String("blackList")).toStringList();
         if (!blackList.empty()) {
@@ -442,24 +526,11 @@ void FolderMan::slotFolderSyncPaused(Folder *f, bool paused)
 void FolderMan::slotFolderCanSyncChanged()
 {
     Folder *f = qobject_cast<Folder *>(sender());
-    ASSERT(f);
+    OC_ASSERT(f);
     if (f->canSync()) {
         _socketApi->slotRegisterPath(f->alias());
     } else {
         _socketApi->slotUnregisterPath(f->alias());
-    }
-}
-
-// this really terminates the current sync process
-// ie. no questions, no prisoners
-// csync still remains in a stable state, regardless of that.
-void FolderMan::terminateSyncProcess()
-{
-    Folder *f = _currentSyncFolder;
-    if (f) {
-        // This will, indirectly and eventually, call slotFolderSyncFinished
-        // and thereby clear _currentSyncFolder.
-        f->slotTerminateSync();
     }
 }
 
@@ -470,7 +541,7 @@ Folder *FolderMan::folder(const QString &alias)
             return _folderMap[alias];
         }
     }
-    return 0;
+    return nullptr;
 }
 
 void FolderMan::scheduleAllFolders()
@@ -561,7 +632,7 @@ void FolderMan::slotEtagJobDestroyed(QObject * /*o*/)
 void FolderMan::slotRunOneEtagJob()
 {
     if (_currentEtagJob.isNull()) {
-        Folder *folder;
+        Folder *folder = nullptr;
         foreach (Folder *f, _folderMap) {
             if (f->etagJob()) {
                 // Caveat: always grabs the first folder with a job, but we think this is Ok for now and avoids us having a seperate queue.
@@ -574,7 +645,7 @@ void FolderMan::slotRunOneEtagJob()
             //qCDebug(lcFolderMan) << "No more remote ETag check jobs to schedule.";
 
             /* now it might be a good time to check for restarting... */
-            if (_currentSyncFolder == NULL && _appRestartRequired) {
+            if (!isAnySyncRunning() && _appRestartRequired) {
                 restartApplication();
             }
         } else {
@@ -606,9 +677,12 @@ void FolderMan::slotAccountStateChanged()
         qCInfo(lcFolderMan) << "Account" << accountName << "disconnected or paused, "
                                                            "terminating or descheduling sync folders";
 
-        if (_currentSyncFolder
-            && _currentSyncFolder->accountState() == accountState) {
-            _currentSyncFolder->slotTerminateSync();
+        foreach (Folder *f, _folderMap.values()) {
+            if (f
+                && f->isSyncRunning()
+                && f->accountState() == accountState) {
+                f->slotTerminateSync();
+            }
         }
 
         QMutableListIterator<Folder *> it(_scheduledFolders);
@@ -632,7 +706,7 @@ void FolderMan::setSyncEnabled(bool enabled)
     }
     _syncEnabled = enabled;
     // force a redraw in case the network connect status changed
-    emit(folderSyncStateChange(0));
+    emit(folderSyncStateChange(nullptr));
 }
 
 void FolderMan::startScheduledSyncSoon()
@@ -643,7 +717,7 @@ void FolderMan::startScheduledSyncSoon()
     if (_scheduledFolders.empty()) {
         return;
     }
-    if (_currentSyncFolder) {
+    if (isAnySyncRunning()) {
         return;
     }
 
@@ -681,8 +755,11 @@ void FolderMan::startScheduledSyncSoon()
   */
 void FolderMan::slotStartScheduledFolderSync()
 {
-    if (_currentSyncFolder) {
-        qCInfo(lcFolderMan) << "Currently folder " << _currentSyncFolder->remoteUrl().toString() << " is running, wait for finish!";
+    if (isAnySyncRunning()) {
+        for (auto f : _folderMap) {
+            if (f->isSyncRunning())
+                qCInfo(lcFolderMan) << "Currently folder " << f->remoteUrl().toString() << " is running, wait for finish!";
+        }
         return;
     }
 
@@ -697,7 +774,7 @@ void FolderMan::slotStartScheduledFolderSync()
     }
 
     // Find the first folder in the queue that can be synced.
-    Folder *folder = 0;
+    Folder *folder = nullptr;
     while (!_scheduledFolders.isEmpty()) {
         Folder *g = _scheduledFolders.dequeue();
         if (g->canSync()) {
@@ -729,7 +806,7 @@ void FolderMan::slotEtagPollTimerTimeout()
         if (!f) {
             continue;
         }
-        if (_currentSyncFolder == f) {
+        if (f->isSyncRunning()) {
             continue;
         }
         if (_scheduledFolders.contains(f)) {
@@ -790,7 +867,8 @@ void FolderMan::slotServerVersionChanged(Account *account)
 void FolderMan::slotWatchedFileUnlocked(const QString &path)
 {
     if (Folder *f = folderForPath(path)) {
-        f->scheduleThisFolderSoon();
+        // Treat this equivalently to the file being reported by the file watcher
+        f->slotWatchedPathChanged(path, Folder::ChangeReason::UnLock);
     }
 }
 
@@ -838,12 +916,29 @@ void FolderMan::slotScheduleFolderByTime()
     }
 }
 
+bool FolderMan::isAnySyncRunning() const
+{
+    if (_currentSyncFolder)
+        return true;
+
+    for (auto f : _folderMap) {
+        if (f->isSyncRunning())
+            return true;
+    }
+    return false;
+}
+
 void FolderMan::slotFolderSyncStarted()
 {
+    auto f = qobject_cast<Folder *>(sender());
+    OC_ASSERT(f);
+    if (!f)
+        return;
+
     qCInfo(lcFolderMan, ">========== Sync started for folder [%s] of account [%s] with remote [%s]",
-        qPrintable(_currentSyncFolder->shortGuiLocalPath()),
-        qPrintable(_currentSyncFolder->accountState()->account()->displayName()),
-        qPrintable(_currentSyncFolder->remoteUrl().toString()));
+        qPrintable(f->shortGuiLocalPath()),
+        qPrintable(f->accountState()->account()->displayName()),
+        qPrintable(f->remoteUrl().toString()));
 }
 
 /*
@@ -854,15 +949,22 @@ void FolderMan::slotFolderSyncStarted()
   */
 void FolderMan::slotFolderSyncFinished(const SyncResult &)
 {
+    auto f = qobject_cast<Folder *>(sender());
+    OC_ASSERT(f);
+    if (!f)
+        return;
+
     qCInfo(lcFolderMan, "<========== Sync finished for folder [%s] of account [%s] with remote [%s]",
-        qPrintable(_currentSyncFolder->shortGuiLocalPath()),
-        qPrintable(_currentSyncFolder->accountState()->account()->displayName()),
-        qPrintable(_currentSyncFolder->remoteUrl().toString()));
+        qPrintable(f->shortGuiLocalPath()),
+        qPrintable(f->accountState()->account()->displayName()),
+        qPrintable(f->remoteUrl().toString()));
 
-    _lastSyncFolder = _currentSyncFolder;
-    _currentSyncFolder = 0;
-
-    startScheduledSyncSoon();
+    if (f == _currentSyncFolder) {
+        _lastSyncFolder = _currentSyncFolder;
+        _currentSyncFolder = nullptr;
+    }
+    if (!isAnySyncRunning())
+        startScheduledSyncSoon();
 }
 
 Folder *FolderMan::addFolder(AccountState *accountState, const FolderDefinition &folderDefinition)
@@ -872,10 +974,16 @@ Folder *FolderMan::addFolder(AccountState *accountState, const FolderDefinition 
     definition.journalPath = definition.defaultJournalPath(accountState->account());
 
     if (!ensureJournalGone(definition.absoluteJournalPath())) {
-        return 0;
+        return nullptr;
     }
 
-    auto folder = addFolderInternal(definition, accountState);
+    auto vfs = createVfsFromPlugin(folderDefinition.virtualFilesMode);
+    if (!vfs) {
+        qCWarning(lcFolderMan) << "Could not load plugin for mode" << folderDefinition.virtualFilesMode;
+        return nullptr;
+    }
+
+    auto folder = addFolderInternal(definition, accountState, std::move(vfs));
 
     // Migration: The first account that's configured for a local folder shall
     // be saved in a backwards-compatible way.
@@ -886,30 +994,35 @@ Folder *FolderMan::addFolder(AccountState *accountState, const FolderDefinition 
             break;
         }
     }
-    folder->setSaveBackwardsCompatible(oneAccountOnly);
 
     if (folder) {
+        folder->setSaveBackwardsCompatible(oneAccountOnly);
         folder->saveToSettings();
         emit folderSyncStateChange(folder);
         emit folderListChanged(_folderMap);
     }
 
+#ifdef Q_OS_WIN
     _navigationPaneHelper.scheduleUpdateCloudStorageRegistry();
-
+#endif
     return folder;
 }
 
-Folder *FolderMan::addFolderInternal(FolderDefinition folderDefinition,
-    AccountState *accountState)
+Folder *FolderMan::addFolderInternal(
+    FolderDefinition folderDefinition,
+    AccountState *accountState,
+    std::unique_ptr<Vfs> vfs)
 {
     auto alias = folderDefinition.alias;
     int count = 0;
-    while (folderDefinition.alias.isEmpty() || _folderMap.contains(folderDefinition.alias)) {
+    while (folderDefinition.alias.isEmpty()
+        || _folderMap.contains(folderDefinition.alias)
+        || _additionalBlockedFolderAliases.contains(folderDefinition.alias)) {
         // There is already a folder configured with this name and folder names need to be unique
         folderDefinition.alias = alias + QString::number(++count);
     }
 
-    auto folder = new Folder(folderDefinition, accountState, this);
+    auto folder = new Folder(folderDefinition, accountState, std::move(vfs), this);
 
     qCInfo(lcFolderMan) << "Adding folder to Folder Map " << folder << folder->alias();
     _folderMap[folder->alias()] = folder;
@@ -933,7 +1046,7 @@ Folder *FolderMan::addFolderInternal(FolderDefinition folderDefinition,
     return folder;
 }
 
-Folder *FolderMan::folderForPath(const QString &path)
+Folder *FolderMan::folderForPath(const QString &path, QString *relativePath)
 {
     QString absolutePath = QDir::cleanPath(path) + QLatin1Char('/');
 
@@ -941,27 +1054,37 @@ Folder *FolderMan::folderForPath(const QString &path)
         const QString folderPath = folder->cleanPath() + QLatin1Char('/');
 
         if (absolutePath.startsWith(folderPath, (Utility::isWindows() || Utility::isMac()) ? Qt::CaseInsensitive : Qt::CaseSensitive)) {
+            if (relativePath) {
+                *relativePath = absolutePath.mid(folderPath.length());
+                relativePath->chop(1); // we added a '/' above
+            }
             return folder;
         }
     }
 
-    return 0;
+    if (relativePath)
+        relativePath->clear();
+    return nullptr;
 }
 
 QStringList FolderMan::findFileInLocalFolders(const QString &relPath, const AccountPtr acc)
 {
     QStringList re;
 
+    // We'll be comparing against Folder::remotePath which always starts with /
+    QString serverPath = relPath;
+    if (!serverPath.startsWith('/'))
+        serverPath.prepend('/');
+
     foreach (Folder *folder, this->map().values()) {
-        if (acc != 0 && folder->accountState()->account() != acc) {
+        if (acc != nullptr && folder->accountState()->account() != acc) {
             continue;
         }
-        QString path = folder->cleanPath();
-        QString remRelPath;
-        // cut off the remote path from the server path.
-        remRelPath = relPath.mid(folder->remotePath().length());
-        path += "/";
-        path += remRelPath;
+        if (!serverPath.startsWith(folder->remotePath()))
+            continue;
+
+        QString path = folder->cleanPath() + '/';
+        path += serverPath.midRef(folder->remotePathTrailingSlash().length());
         if (QFile::exists(path)) {
             re.append(path);
         }
@@ -978,18 +1101,18 @@ void FolderMan::removeFolder(Folder *f)
 
     qCInfo(lcFolderMan) << "Removing " << f->alias();
 
-    const bool currentlyRunning = (_currentSyncFolder == f);
+    const bool currentlyRunning = f->isSyncRunning();
     if (currentlyRunning) {
         // abort the sync now
-        terminateSyncProcess();
+        f->slotTerminateSync();
     }
 
     if (_scheduledFolders.removeAll(f) > 0) {
         emit scheduleQueueChanged();
     }
 
-    f->wipe();
     f->setSyncPaused(true);
+    f->wipeForRemoval();
 
     // remove the folder configuration
     f->removeFromSettings();
@@ -1005,7 +1128,9 @@ void FolderMan::removeFolder(Folder *f)
         delete f;
     }
 
+#ifdef Q_OS_WIN
     _navigationPaneHelper.scheduleUpdateCloudStorageRegistry();
+#endif
 
     emit folderListChanged(_folderMap);
 }
@@ -1240,25 +1365,57 @@ QString FolderMan::trayTooltipStatusString(
     return folderMessage;
 }
 
-QString FolderMan::checkPathValidityForNewFolder(const QString &path, const QUrl &serverUrl, bool forNewDirectory) const
+static QString checkPathValidityRecursive(const QString &path)
 {
     if (path.isEmpty()) {
-        return tr("No valid folder selected!");
+        return FolderMan::tr("No valid folder selected!");
     }
 
     QFileInfo selFile(path);
 
     if (!selFile.exists()) {
-        return checkPathValidityForNewFolder(selFile.dir().path(), serverUrl, true);
+        QString parentPath = selFile.dir().path();
+        if (parentPath != path)
+            return checkPathValidityRecursive(parentPath);
+        return FolderMan::tr("The selected path does not exist!");
     }
 
     if (!selFile.isDir()) {
-        return tr("The selected path is not a folder!");
+        return FolderMan::tr("The selected path is not a folder!");
     }
 
     if (!selFile.isWritable()) {
-        return tr("You have no permission to write to the selected folder!");
+        return FolderMan::tr("You have no permission to write to the selected folder!");
     }
+    return QString();
+}
+
+// QFileInfo::canonicalPath returns an empty string if the file does not exist.
+// This function also works with files that does not exist and resolve the symlinks in the
+// parent directories.
+static QString canonicalPath(const QString &path)
+{
+    QFileInfo selFile(path);
+    if (!selFile.exists()) {
+        const auto parentPath = selFile.dir().path();
+
+        // It's possible for the parentPath to match the path
+        // (possibly we've arrived at a non-existant drive root on Windows)
+        // and recursing would be fatal.
+        if (parentPath == path) {
+            return path;
+        }
+
+        return canonicalPath(parentPath) + '/' + selFile.fileName();
+    }
+    return selFile.canonicalFilePath();
+}
+
+QString FolderMan::checkPathValidityForNewFolder(const QString &path, const QUrl &serverUrl) const
+{
+    QString recursiveValidity = checkPathValidityRecursive(path);
+    if (!recursiveValidity.isEmpty())
+        return recursiveValidity;
 
     // check if the local directory isn't used yet in another ownCloud sync
     Qt::CaseSensitivity cs = Qt::CaseSensitive;
@@ -1266,49 +1423,20 @@ QString FolderMan::checkPathValidityForNewFolder(const QString &path, const QUrl
         cs = Qt::CaseInsensitive;
     }
 
+    const QString userDir = QDir::cleanPath(canonicalPath(path)) + '/';
     for (auto i = _folderMap.constBegin(); i != _folderMap.constEnd(); ++i) {
         Folder *f = static_cast<Folder *>(i.value());
-        QString folderDir = QDir(f->path()).canonicalPath();
-        if (folderDir.isEmpty()) {
-            continue;
-        }
-        if (!folderDir.endsWith(QLatin1Char('/'), cs))
-            folderDir.append(QLatin1Char('/'));
+        QString folderDir = QDir::cleanPath(canonicalPath(f->path())) + '/';
 
-        const QString folderDirClean = QDir::cleanPath(folderDir) + '/';
-        const QString userDirClean = QDir::cleanPath(path) + '/';
-
-        // folderDir follows sym links, path not.
-        bool differentPathes = !Utility::fileNamesEqual(QDir::cleanPath(folderDir), QDir::cleanPath(path));
-
-        if (!forNewDirectory && differentPathes && folderDirClean.startsWith(userDirClean, cs)) {
+        bool differentPaths = QString::compare(folderDir, userDir, cs) != 0;
+        if (differentPaths && folderDir.startsWith(userDir, cs)) {
             return tr("The local folder %1 already contains a folder used in a folder sync connection. "
                       "Please pick another one!")
                 .arg(QDir::toNativeSeparators(path));
         }
 
-        // QDir::cleanPath keeps links
-        // canonicalPath() remove symlinks and uses the symlink targets.
-        QString absCleanUserFolder = QDir::cleanPath(QDir(path).canonicalPath()) + '/';
-
-        if ((forNewDirectory || differentPathes) && userDirClean.startsWith(folderDirClean, cs)) {
+        if (differentPaths && userDir.startsWith(folderDir, cs)) {
             return tr("The local folder %1 is already contained in a folder used in a folder sync connection. "
-                      "Please pick another one!")
-                .arg(QDir::toNativeSeparators(path));
-        }
-
-        // both follow symlinks.
-        bool cleanUserEqualsCleanFolder = Utility::fileNamesEqual(absCleanUserFolder, folderDirClean);
-        if (differentPathes && absCleanUserFolder.startsWith(folderDirClean, cs) && !cleanUserEqualsCleanFolder) {
-            return tr("The local folder %1 is a symbolic link. "
-                      "The link target is already contained in a folder used in a folder sync connection. "
-                      "Please pick another one!")
-                .arg(QDir::toNativeSeparators(path));
-        }
-
-        if (differentPathes && folderDirClean.startsWith(absCleanUserFolder, cs) && !cleanUserEqualsCleanFolder && !forNewDirectory) {
-            return tr("The local folder %1 contains a symbolic link. "
-                      "The link target contains an already synced folder "
                       "Please pick another one!")
                 .arg(QDir::toNativeSeparators(path));
         }
@@ -1316,7 +1444,7 @@ QString FolderMan::checkPathValidityForNewFolder(const QString &path, const QUrl
         // if both pathes are equal, the server url needs to be different
         // otherwise it would mean that a new connection from the same local folder
         // to the same account is added which is not wanted. The account must differ.
-        if (serverUrl.isValid() && Utility::fileNamesEqual(absCleanUserFolder, folderDir)) {
+        if (serverUrl.isValid() && !differentPaths) {
             QUrl folderUrl = f->accountState()->account()->url();
             QString user = f->accountState()->account()->credentials()->user();
             folderUrl.setUserName(user);

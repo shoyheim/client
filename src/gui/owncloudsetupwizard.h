@@ -41,9 +41,6 @@ class OwncloudSetupWizard : public QObject
 {
     Q_OBJECT
 public:
-    /** Run the wizard */
-    static void runWizard(QObject *obj, const char *amember, QWidget *parent = 0);
-    static bool bringWizardToFrontIfVisible();
 signals:
     // overall dialog close signal.
     void ownCloudWizardDone(int);
@@ -67,11 +64,10 @@ private slots:
     void slotRemoteFolderExists(QNetworkReply *);
     void slotCreateRemoteFolderFinished(QNetworkReply::NetworkError);
     void slotAssistantFinished(int);
-    void slotSkipFolderConfiguration();
 
 private:
-    explicit OwncloudSetupWizard(QObject *parent = 0);
-    ~OwncloudSetupWizard();
+    explicit OwncloudSetupWizard(QWidget *parent = nullptr);
+    ~OwncloudSetupWizard() override;
     void startWizard();
     void testOwnCloudConnect();
     void createRemoteFolder();
@@ -83,6 +79,8 @@ private:
     OwncloudWizard *_ocWizard;
     QString _initLocalFolder;
     QString _remoteFolder;
+
+    friend class ownCloudGui;
 };
 }
 

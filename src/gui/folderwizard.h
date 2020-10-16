@@ -25,6 +25,8 @@
 #include "ui_folderwizardsourcepage.h"
 #include "ui_folderwizardtargetpage.h"
 
+class QCheckBox;
+
 namespace OCC {
 
 class SelectiveSyncWidget;
@@ -51,11 +53,11 @@ class FolderWizardLocalPath : public FormatWarningsWizardPage
     Q_OBJECT
 public:
     explicit FolderWizardLocalPath(const AccountPtr &account);
-    ~FolderWizardLocalPath();
+    ~FolderWizardLocalPath() override;
 
-    virtual bool isComplete() const Q_DECL_OVERRIDE;
-    void initializePage() Q_DECL_OVERRIDE;
-    void cleanupPage() Q_DECL_OVERRIDE;
+    bool isComplete() const override;
+    void initializePage() override;
+    void cleanupPage() override;
 
     void setFolderMap(const Folder::Map &fm) { _folderMap = fm; }
 protected slots:
@@ -78,12 +80,12 @@ class FolderWizardRemotePath : public FormatWarningsWizardPage
     Q_OBJECT
 public:
     explicit FolderWizardRemotePath(const AccountPtr &account);
-    ~FolderWizardRemotePath();
+    ~FolderWizardRemotePath() override;
 
-    virtual bool isComplete() const Q_DECL_OVERRIDE;
+    bool isComplete() const override;
 
-    virtual void initializePage() Q_DECL_OVERRIDE;
-    virtual void cleanupPage() Q_DECL_OVERRIDE;
+    void initializePage() override;
+    void cleanupPage() override;
 
 protected slots:
 
@@ -100,7 +102,6 @@ protected slots:
     void slotFolderEntryEdited(const QString &text);
     void slotLsColFolderEntry();
     void slotTypedPathFound(const QStringList &subpaths);
-    void slotTypedPathError(QNetworkReply *reply);
 
 private:
     LsColJob *runLsColJob(const QString &path);
@@ -121,15 +122,19 @@ class FolderWizardSelectiveSync : public QWizardPage
     Q_OBJECT
 public:
     explicit FolderWizardSelectiveSync(const AccountPtr &account);
-    ~FolderWizardSelectiveSync();
+    ~FolderWizardSelectiveSync() override;
 
-    virtual bool validatePage() Q_DECL_OVERRIDE;
+    bool validatePage() override;
 
-    virtual void initializePage() Q_DECL_OVERRIDE;
-    virtual void cleanupPage() Q_DECL_OVERRIDE;
+    void initializePage() override;
+    void cleanupPage() override;
+
+private slots:
+    void virtualFilesCheckboxClicked();
 
 private:
     SelectiveSyncWidget *_selectiveSync;
+    QCheckBox *_virtualFilesCheckBox = nullptr;
 };
 
 /**
@@ -146,8 +151,8 @@ public:
         Page_SelectiveSync
     };
 
-    explicit FolderWizard(AccountPtr account, QWidget *parent = 0);
-    ~FolderWizard();
+    explicit FolderWizard(AccountPtr account, QWidget *parent = nullptr);
+    ~FolderWizard() override;
 
     bool eventFilter(QObject *watched, QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;

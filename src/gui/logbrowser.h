@@ -29,17 +29,8 @@
 
 namespace OCC {
 
-/**
- * @brief The LogWidget class
- * @ingroup gui
- */
-class LogWidget : public QPlainTextEdit
-{
-    Q_OBJECT
-public:
-    explicit LogWidget(QWidget *parent = 0);
-
-signals:
+namespace Ui {
+    class LogBrowser;
 };
 
 /**
@@ -50,30 +41,22 @@ class LogBrowser : public QDialog
 {
     Q_OBJECT
 public:
-    explicit LogBrowser(QWidget *parent = 0);
-    ~LogBrowser();
+    explicit LogBrowser(QWidget *parent);
+    ~LogBrowser() override;
 
-    void setLogFile(const QString &, bool);
-
-protected:
-    void showEvent(QShowEvent *) Q_DECL_OVERRIDE;
-    void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
+    /** Sets Logger settings depending on ConfigFile values.
+     *
+     * Currently used for establishing logging to a temporary directory.
+     * Will only enable logging if it isn't enabled already.
+     */
+    static void setupLoggingFromConfig();
 
 protected slots:
-    void slotNewLog(const QString &msg);
-    void slotFind();
-    void slotDebugCheckStateChanged(int);
-    void search(const QString &);
-    void slotSave();
-    void slotClearLog();
+    void togglePermanentLogging(bool enabled);
+    void toggleLogDeletion(bool enabled);
 
 private:
-    LogWidget *_logWidget;
-    QLineEdit *_findTermEdit;
-    QCheckBox *_logDebugCheckBox;
-    QPushButton *_saveBtn;
-    QPushButton *_clearBtn;
-    QLabel *_statusLabel;
+    QScopedPointer<Ui::LogBrowser> ui;
 };
 
 } // namespace

@@ -19,6 +19,7 @@
 #include "accountfwd.h"
 #include "sharepermissions.h"
 #include "QProgressIndicator.h"
+#include "sharepermissions.h"
 #include <QDialog>
 #include <QSharedPointer>
 #include <QList>
@@ -52,8 +53,8 @@ public:
         const QString &sharePath,
         const QString &localPath,
         SharePermissions maxSharingPermissions,
-        QWidget *parent = 0);
-    ~ShareLinkWidget();
+        QWidget *parent = nullptr);
+    ~ShareLinkWidget() override;
     void getShares();
 
 private slots:
@@ -75,7 +76,7 @@ private slots:
 
     void slotDeleteShareFetched();
     void slotCreateShareFetched(const QSharedPointer<LinkShare> &share);
-    void slotCreateShareRequiresPassword(const QString &message);
+    void slotCreateShareForbidden(const QString &message);
     void slotPasswordSet();
     void slotExpireSet();
     void slotPermissionsSet();
@@ -99,10 +100,18 @@ private:
     /** Retrieve a share's name, accounting for _namesSupported */
     QString shareName(const LinkShare &share) const;
 
+    /** Permission implied by current ui state */
+    SharePermissions uiPermissionState() const;
+
     /**
      * Retrieve the selected share, returning 0 if none.
+     *
+     * Returning 0 means that the "Create new..." item is selected.
      */
     QSharedPointer<LinkShare> selectedShare() const;
+
+    /** Returns the default expire date as requested by the server, invalid otherwise */
+    QDate capabilityDefaultExpireDate() const;
 
     Ui::ShareLinkWidget *_ui;
     AccountPtr _account;
@@ -118,9 +127,13 @@ private:
     ShareManager *_manager;
 
     bool _isFile;
-    bool _passwordRequired;
     bool _expiryRequired;
     bool _namesSupported;
+
+    // For maintaining the selection and temporary ui state
+    // when getShares() finishes, but the selection didn't
+    // change.
+    QString _selectedShareId;
 
     // When a new share is created, we want to select it
     // the next time getShares() finishes. This stores its id.

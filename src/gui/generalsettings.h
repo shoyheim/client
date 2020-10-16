@@ -35,9 +35,11 @@ class GeneralSettings : public QWidget
     Q_OBJECT
 
 public:
-    explicit GeneralSettings(QWidget *parent = 0);
-    ~GeneralSettings();
-    QSize sizeHint() const;
+    explicit GeneralSettings(QWidget *parent = nullptr);
+    ~GeneralSettings() override;
+
+signals:
+    void showAbout();
 
 private slots:
     void saveMiscSettings();
@@ -45,13 +47,18 @@ private slots:
     void slotToggleOptionalDesktopNotifications(bool);
     void slotShowInExplorerNavigationPane(bool);
     void slotUpdateInfo();
+    void slotUpdateChannelChanged(int index);
     void slotIgnoreFilesEditor();
     void loadMiscSettings();
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private:
+    void updateAutoStartInfo();
+
     Ui::GeneralSettings *_ui;
     QPointer<IgnoreListEditor> _ignoreEditor;
-    QPointer<SyncLogDialog> _syncLogDialog;
     bool _currentlyLoading;
 };
 

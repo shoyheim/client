@@ -50,12 +50,11 @@ class FolderStatusModel;
 class AccountSettings : public QWidget
 {
     Q_OBJECT
+    Q_PROPERTY(AccountState* accountState MEMBER _accountState)
 
 public:
-    explicit AccountSettings(AccountState *accountState, QWidget *parent = 0);
-    ~AccountSettings();
-    QSize sizeHint() const Q_DECL_OVERRIDE { return ownCloudGui::settingsDialogSize(); }
-
+    explicit AccountSettings(AccountState *accountState, QWidget *parent = nullptr);
+    ~AccountSettings() override;
 
 signals:
     void folderChanged();
@@ -73,17 +72,18 @@ protected slots:
     void slotAddFolder();
     void slotEnableCurrentFolder();
     void slotScheduleCurrentFolder();
-    void slotScheduleCurrentFolderForceRemoteDiscovery();
+    void slotScheduleCurrentFolderForceFullDiscovery();
     void slotForceSyncCurrentFolder();
     void slotRemoveCurrentFolder();
     void slotOpenCurrentFolder(); // sync folder
     void slotOpenCurrentLocalSubFolder(); // selected subfolder in sync folder
+    void slotEnableVfsCurrentFolder();
+    void slotDisableVfsCurrentFolder();
+    void slotSetCurrentFolderAvailability(PinState state);
     void slotFolderWizardAccepted();
     void slotFolderWizardRejected();
     void slotDeleteAccount();
     void slotToggleSignInState();
-    void slotOpenAccountWizard();
-    void slotAccountAdded(AccountState *);
     void refreshSelectiveSyncStatus();
     void slotCustomContextMenuRequested(const QPoint &);
     void slotFolderListClicked(const QModelIndex &indx);
@@ -93,7 +93,7 @@ protected slots:
 private:
     void showConnectionLabel(const QString &message,
         QStringList errors = QStringList());
-    bool event(QEvent *) Q_DECL_OVERRIDE;
+    bool event(QEvent *) override;
     void createAccountToolbox();
 
     /// Returns the alias of the selected folder, empty string if none

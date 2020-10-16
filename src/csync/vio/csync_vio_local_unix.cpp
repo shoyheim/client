@@ -28,12 +28,13 @@
 
 #include "c_private.h"
 #include "c_lib.h"
-#include "c_string.h"
-#include "c_utf8.h"
 #include "csync_util.h"
-#include "csync_vio.h"
 
 #include "vio/csync_vio_local.h"
+#include "common/vfs.h"
+
+#include <QtCore/QLoggingCategory>
+#include <QtCore/QFile>
 
 Q_LOGGING_CATEGORY(lcCSyncVIOLocal, "sync.csync.vio_local", QtInfoMsg)
 
@@ -41,69 +42,48 @@ Q_LOGGING_CATEGORY(lcCSyncVIOLocal, "sync.csync.vio_local", QtInfoMsg)
  * directory functions
  */
 
-typedef struct dhandle_s {
+struct csync_vio_handle_t {
   DIR *dh;
-  char *path;
-} dhandle_t;
+  QByteArray path;
+};
 
 static int _csync_vio_local_stat_mb(const mbchar_t *wuri, csync_file_stat_t *buf);
 
-csync_vio_handle_t *csync_vio_local_opendir(const char *name) {
-  dhandle_t *handle = NULL;
-  mbchar_t *dirname = NULL;
+csync_vio_handle_t *csync_vio_local_opendir(const QString &name) {
+    QScopedPointer<csync_vio_handle_t> handle(new csync_vio_handle_t{});
 
-  handle = (dhandle_t*)c_malloc(sizeof(dhandle_t));
+    auto dirname = QFile::encodeName(name);
 
-  dirname = c_utf8_path_to_locale(name);
+    handle->dh = _topendir(dirname.constData());
+    if (!handle->dh) {
+        return nullptr;
+    }
 
-  handle->dh = _topendir( dirname );
-  if (handle->dh == NULL) {
-    c_free_locale_string(dirname);
-    SAFE_FREE(handle);
-    return NULL;
-  }
-
-  handle->path = c_strdup(name);
-  c_free_locale_string(dirname);
-
-  return (csync_vio_handle_t *) handle;
+    handle->path = dirname;
+    return handle.take();
 }
 
 int csync_vio_local_closedir(csync_vio_handle_t *dhandle) {
-  dhandle_t *handle = NULL;
-  int rc = -1;
-
-  if (dhandle == NULL) {
-    errno = EBADF;
-    return -1;
-  }
-
-  handle = (dhandle_t *) dhandle;
-  rc = _tclosedir(handle->dh);
-
-  SAFE_FREE(handle->path);
-  SAFE_FREE(handle);
-
-  return rc;
+    Q_ASSERT(dhandle);
+    auto rc = _tclosedir(dhandle->dh);
+    delete dhandle;
+    return rc;
 }
 
-std::unique_ptr<csync_file_stat_t> csync_vio_local_readdir(csync_vio_handle_t *dhandle) {
+std::unique_ptr<csync_file_stat_t> csync_vio_local_readdir(csync_vio_handle_t *handle, OCC::Vfs *vfs) {
 
-  dhandle_t *handle = NULL;
-
-  handle = (dhandle_t *) dhandle;
-  struct _tdirent *dirent = NULL;
+  struct _tdirent *dirent = nullptr;
   std::unique_ptr<csync_file_stat_t> file_stat;
 
   do {
       dirent = _treaddir(handle->dh);
-      if (dirent == NULL)
+      if (dirent == nullptr)
           return {};
   } while (qstrcmp(dirent->d_name, ".") == 0 || qstrcmp(dirent->d_name, "..") == 0);
 
   file_stat.reset(new csync_file_stat_t);
-  file_stat->path = c_utf8_from_locale(dirent->d_name);
-  QByteArray fullPath = QByteArray() % const_cast<const char *>(handle->path) % '/' % QByteArray() % const_cast<const char *>(dirent->d_name);
+  file_stat->path = QFile::decodeName(dirent->d_name).toUtf8();
+  QByteArray fullPath = handle->path % '/' % QByteArray() % const_cast<const char *>(dirent->d_name);
   if (file_stat->path.isNull()) {
       file_stat->original_path = fullPath;
       qCWarning(lcCSyncVIOLocal) << "Invalid characters in file/directory name, please rename:" << dirent->d_name << handle->path;
@@ -137,17 +117,21 @@ std::unique_ptr<csync_file_stat_t> csync_vio_local_readdir(csync_vio_handle_t *d
       // Will get excluded by _csync_detect_update.
       file_stat->type = ItemTypeSkip;
   }
+
+  // Override type for virtual files if desired
+  if (vfs) {
+      // Directly modifies file_stat->type.
+      // We can ignore the return value since we're done here anyway.
+      vfs->statTypeVirtualFile(file_stat.get(), nullptr);
+  }
+
   return file_stat;
 }
 
 
-int csync_vio_local_stat(const char *uri, csync_file_stat_t *buf)
+int csync_vio_local_stat(const QString &uri, csync_file_stat_t *buf)
 {
-    mbchar_t *wuri = c_utf8_path_to_locale(uri);
-    *buf = csync_file_stat_t();
-    int rc = _csync_vio_local_stat_mb(wuri, buf);
-    c_free_locale_string(wuri);
-    return rc;
+    return _csync_vio_local_stat_mb(QFile::encodeName(uri).constData(), buf);
 }
 
 static int _csync_vio_local_stat_mb(const mbchar_t *wuri, csync_file_stat_t *buf)
