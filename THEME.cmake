@@ -1,4 +1,4 @@
-set(OEM_THEME_DIR "" CACHE STRING "Define directory containing a custom theme")
+set(OEM_THEME_DIR "fogtheme" CACHE STRING "Define directory containing a custom theme")
 if (EXISTS "${OEM_THEME_DIR}/OEM.cmake")
     include("${OEM_THEME_DIR}/OEM.cmake")
 else()
