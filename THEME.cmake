@@ -1,6 +1,6 @@
 set(OEM_THEME_DIR "fogtheme" CACHE STRING "Define directory containing a custom theme")
-if (EXISTS "${OEM_THEME_DIR}/OEM.cmake")
-    include("${OEM_THEME_DIR}/OEM.cmake")
+if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/${OEM_THEME_DIR}/OEM.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/${OEM_THEME_DIR}/OEM.cmake")
 else()
     include ("${CMAKE_CURRENT_LIST_DIR}/OWNCLOUD.cmake")
 endif()
