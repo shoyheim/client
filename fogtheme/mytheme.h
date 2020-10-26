@@ -23,12 +23,12 @@
 #include <QApplication>
 
 
-namespace Mirall {
+namespace OCC {
 
 class MyTheme : public Theme
 {
 public:
-    MyTheme() : Theme() {}
+    MyTheme();
 
     QIcon folderDisabledIcon() const Q_DECL_OVERRIDE { return themeIcon( QLatin1String("state-error" ) ); }
     QString configFileName() const Q_DECL_OVERRIDE  { return QLatin1String( "skylagring.cfg" ); }
@@ -79,9 +79,9 @@ public:
      * The logo you want to be seen in the header of the setup wizard..
      * example: return QPixmap(":/mirall/theme/colored/wizard_logo.png");
      */
-	virtual QPixmap wizardHeaderLogo() const
+    QIcon wizardHeaderLogo() const override
 	{
-	    return QPixmap(":/fogtheme/theme/colored/wizard_logo.png");
+            return QPixmap(":/fogtheme/theme/colored/wizard_logo.png");
 	}
 
 
