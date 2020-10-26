@@ -210,9 +210,9 @@ endif()
 
 #TODO Move resources files
 target_sources(${APPLICATION_EXECUTABLE} PRIVATE ../../client.qrc)
-if (EXISTS "${OEM_THEME_DIR}/theme.qrc")
-    target_sources(${APPLICATION_EXECUTABLE} PRIVATE ${OEM_THEME_DIR}/theme.qrc)
-    set(theme_dir ${OEM_THEME_DIR}/theme)
+if (EXISTS "${CMAKE_SOURCE_DIR}/${OEM_THEME_DIR}/theme.qrc")
+    target_sources(${APPLICATION_EXECUTABLE} PRIVATE ${CMAKE_SOURCE_DIR}/${OEM_THEME_DIR}/theme.qrc)
+    set(theme_dir ${CMAKE_SOURCE_DIR}/${OEM_THEME_DIR}/theme)
 else()
     target_sources(${APPLICATION_EXECUTABLE} PRIVATE ../../theme.qrc)
     set(theme_dir ${CMAKE_SOURCE_DIR}/theme)
