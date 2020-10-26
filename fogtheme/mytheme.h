@@ -82,24 +82,9 @@ public:
     QIcon wizardHeaderLogo() const override
 	{
             return QPixmap( QLatin1String(":/fogtheme/theme/colored/wizard_logo.png"));
-	}
+    }
 
-
-	virtual QString about() const
-	{
-	    QString re;
-            re = tr( "<p>Version %1. For more information please visit <a href='https://%2'>%3</a>.</p>")
-	            .arg(MIRALL_VERSION_STRING).arg(MIRALL_STRINGIFY(APPLICATION_DOMAIN))
-	            .arg(MIRALL_STRINGIFY(APPLICATION_DOMAIN));
-
-	    re += tr("<p>Copyright ownCloud, Incorporated</p>");
-	    re += tr("<p>Distributed by %1 and licensed under the GNU General Public License (GPL) Version 2.0.<br/>"
-	             "Copyrights to the %2 logo belongs to %1.</p>")
-	            .arg(APPLICATION_VENDOR).arg(APPLICATION_NAME);
-
-	    re += gitSHA1();
-	    return re;
-	}
+    virtual QString about() const;
 
 	QString overrideServerUrl() const
 	{
@@ -109,6 +94,6 @@ public:
 
 };
 
-} // namespace mirall
+} // namespace OCC
 
 #endif // MY_THEME_H
