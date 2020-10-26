@@ -63,7 +63,7 @@ public:
      */
 	virtual QColor wizardHeaderTitleColor() const
 	{              
-	    return QColor("#D36D2F");
+	    return QColor( QLatin1String("#D36D2F"));
 	}
 
     /*
@@ -72,7 +72,7 @@ public:
      */
 	virtual QColor wizardHeaderBackgroundColor() const
 	{
-	    return QColor("#000000");
+            return QColor( QLatin1String("#000000"));
 	}
 
     /*
@@ -81,15 +81,15 @@ public:
      */
     QIcon wizardHeaderLogo() const override
 	{
-            return QPixmap(":/fogtheme/theme/colored/wizard_logo.png");
+            return QPixmap( QLatin1String(":/fogtheme/theme/colored/wizard_logo.png"));
 	}
 
 
 	virtual QString about() const
 	{
 	    QString re;
-	    re = tr("<p>Version %1. For more information please visit <a href='%2'>%3</a>.</p>")
-	            .arg(MIRALL_VERSION_STRING).arg("http://" MIRALL_STRINGIFY(APPLICATION_DOMAIN))
+            re = tr( QLatin1String("<p>Version %1. For more information please visit <a href='%2'>%3</a>.</p>"))
+	            .arg(MIRALL_VERSION_STRING).arg( QLatin1String("http://") MIRALL_STRINGIFY(APPLICATION_DOMAIN))
 	            .arg(MIRALL_STRINGIFY(APPLICATION_DOMAIN));
 
 	    re += tr("<p>Copyright ownCloud, Incorporated</p>");
