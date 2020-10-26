@@ -10,13 +10,13 @@ set( APPLICATION_VIRTUALFILE_SUFFIX "InternSky" CACHE STRING "Virtual file suffi
 
 set( THEME_CLASS            "MyTheme" )
 set( APPLICATION_REV_DOMAIN "no.fjordane-it.fog.desktopclient" )
-set( WIN_SETUP_BITMAP_PATH  "${OEM_THEME_DIR}/resources" )
+set( WIN_SETUP_BITMAP_PATH  "${CMAKE_SOURCE_DIR}/${OEM_THEME_DIR}/resources" )
 
-set( CPACK_PACKAGE_ICON  "${OEM_THEME_DIR}/resources/skylagring.ico" )
+set( CPACK_PACKAGE_ICON  "${CMAKE_SOURCE_DIR}/${OEM_THEME_DIR}/resources/skylagring.ico" )
 
 set( MAC_INSTALLER_BACKGROUND_FILE "${CMAKE_SOURCE_DIR}/admin/osx/installer-background.png" CACHE STRING "The MacOSX installer background image")
 
-set( THEME_INCLUDE          "${OEM_THEME_DIR}/mytheme.h" )
+set( THEME_INCLUDE          "${CMAKE_SOURCE_DIR}/${OEM_THEME_DIR}/mytheme.h" )
 # set( APPLICATION_LICENSE    "${OEM_THEME_DIR}/license.txt )
 
 option( WITH_CRASHREPORTER "Build crashreporter" OFF )
