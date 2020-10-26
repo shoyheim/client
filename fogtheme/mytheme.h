@@ -87,10 +87,10 @@ public:
 
     virtual QString about() const
     {
-        QString devString;
-        devString = QLatin1String("<p>Version " MIRALL_VERSION_STRING ". For more information visit <a href=\"https://serit.no\">Serit.no</a></p> <p><small>By Serit Fjordane IT AS</small></p> <p>Copyright Serit Fjordane IT</p> <p>Licensed under the GNU General Public License (GPL) Version 2.0<br/></p>")
-
-        return devString;
+        return QLatin1String("<p>Version " MIRALL_VERSION_STRING 
+            ". For more information visit <a href=\"https://serit.no\">"
+            "Serit.no</a></p> <p><small>By Serit Fjordane IT AS</small></p> "
+            "<p>Copyright Serit Fjordane IT</p> <p>Licensed under the GNU General Public License (GPL) Version 2.0<br/></p>");
     }
 
 	QString overrideServerUrl() const
