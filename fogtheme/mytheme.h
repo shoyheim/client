@@ -28,7 +28,8 @@ namespace OCC {
 class MyTheme : public Theme
 {
 public:
-    MyTheme();
+    MyTheme()
+        : Theme() {};
 
     QIcon folderDisabledIcon() const Q_DECL_OVERRIDE { return themeIcon( QLatin1String("state-error" ) ); }
     QString configFileName() const Q_DECL_OVERRIDE  { return QLatin1String( "skylagring.cfg" ); }
