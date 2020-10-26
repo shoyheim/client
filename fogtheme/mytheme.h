@@ -88,8 +88,8 @@ public:
 	virtual QString about() const
 	{
 	    QString re;
-            re = tr( QLatin1String("<p>Version %1. For more information please visit <a href='%2'>%3</a>.</p>"))
-	            .arg(MIRALL_VERSION_STRING).arg( QLatin1String("http://") MIRALL_STRINGIFY(APPLICATION_DOMAIN))
+            re = tr( "<p>Version %1. For more information please visit <a href='https://%2'>%3</a>.</p>")
+	            .arg(MIRALL_VERSION_STRING).arg(MIRALL_STRINGIFY(APPLICATION_DOMAIN))
 	            .arg(MIRALL_STRINGIFY(APPLICATION_DOMAIN));
 
 	    re += tr("<p>Copyright ownCloud, Incorporated</p>");
