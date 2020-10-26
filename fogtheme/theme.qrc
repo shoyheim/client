@@ -1,12 +1,14 @@
 <RCC>
     <qresource prefix="/client">
-        <file>theme/colored/InternSky-icon-512.png</file>
-        <file>theme/colored/InternSky-icon-256.png</file>
-        <file>theme/colored/InternSky-icon-128.png</file>
-        <file>theme/colored/InternSky-icon-22.png</file>
-        <file>theme/colored/InternSky-icon-32.png</file>
-        <file>theme/colored/InternSky-icon-48.png</file>
-        <file>theme/colored/InternSky-icon-64.png</file>
+        <file alias="theme/colored/InternSky-icon-1024.png">theme/colored/1024-InternSky-icon.png</file>
+        <file alias="theme/colored/InternSky-icon-512.png">theme/colored/512-InternSky-icon.png</file>
+        <file alias="theme/colored/InternSky-icon-256.png">theme/colored/256-InternSky-icon.png</file>
+        <file alias="theme/colored/InternSky-icon-128.png">theme/colored/128-InternSky-icon.png</file>
+        <file alias="theme/colored/InternSky-icon-16.png">theme/colored/16-InternSky-icon.png</file>
+        <file alias="theme/colored/InternSky-icon-22.png">theme/colored/22-InternSky-icon.png</file>
+        <file alias="theme/colored/InternSky-icon-32.png">theme/colored/32-InternSky-icon.png</file>
+        <file alias="theme/colored/InternSky-icon-48.png">theme/colored/48-InternSky-icon.png</file>
+        <file alias="theme/colored/InternSky-icon-64.png">theme/colored/64-InternSky-icon.png</file>
         <file>theme/colored/state-error-32.png</file>
         <file>theme/colored/state-error-64.png</file>
         <file>theme/colored/state-error-128.png</file>

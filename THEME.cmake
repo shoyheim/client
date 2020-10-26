@@ -1,4 +1,4 @@
-set(OEM_THEME_DIR "fogtheme" CACHE STRING "Define directory containing a custom theme")
+set(OEM_THEME_DIR "D:\VisualStudioProjects\OwnCloud\client\fogtheme" CACHE STRING "Define directory containing a custom theme")
 if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/${OEM_THEME_DIR}/OEM.cmake")
     include("${CMAKE_CURRENT_LIST_DIR}/${OEM_THEME_DIR}/OEM.cmake")
 else()
