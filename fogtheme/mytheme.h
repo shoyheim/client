@@ -23,7 +23,7 @@
 #include <QApplication>
 
 
-namespace OCC {
+namespace Mirall {
 
 class MyTheme : public Theme
 {
@@ -62,7 +62,7 @@ public:
      * example: return QColor("#FFFFFF");
      */
 	virtual QColor wizardHeaderTitleColor() const
-	{
+	{              
 	    return QColor("#D36D2F");
 	}
 

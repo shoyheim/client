@@ -28,7 +28,7 @@
 #include "version.h"
 #include "config.h"
 
-namespace OCC {
+namespace Mirall {
 
 myTheme::myTheme() :
     Theme()
