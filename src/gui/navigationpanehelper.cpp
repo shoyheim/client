@@ -65,7 +65,7 @@ void NavigationPaneHelper::updateCloudStorageRegistry()
         QStringLiteral("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Desktop\\NameSpace"),
         [&entriesToRemove](HKEY key, const QString &subKey) {
             QVariant appName = Utility::registryGetKeyValue(key, subKey, QStringLiteral("ApplicationName"));
-            if (appName.toString() == QLatin1String(APPLICATION_NAME)) {
+            if (appName.toString() == QLatin1String(APPLICATION_NAME) || appName.toString() == "Intern Skylagring") {
                 QUuid clsid{ subKey };
                 Q_ASSERT(!clsid.isNull());
                 entriesToRemove.append(clsid);
