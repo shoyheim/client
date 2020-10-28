@@ -171,3 +171,4 @@ FakesAssemblies/
 # reference to "build"
 !building.adoc
 .vs/
+CMakeSettings.json
