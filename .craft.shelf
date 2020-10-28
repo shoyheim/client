@@ -18,7 +18,7 @@ version = 3.3.2
 version = cmake
 
 [dev-utils/ccache]
-version = 3.7.8
+version = 4.0
 
 [dev-utils/cmake]
 version = latest
