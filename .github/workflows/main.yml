@@ -30,9 +30,9 @@ jobs:
             - target: macos-64-clang
               os: macos-latest
               fetch-depth: 1
-            - target: linux-64-gcc
-              os: ubuntu-18.04
-              fetch-depth: 1
+            #- target: linux-64-gcc
+            #  os: ubuntu-18.04
+            #  fetch-depth: 1
     env:
       CRAFT_TARGET: ${{ matrix.target }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
