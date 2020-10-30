@@ -119,7 +119,7 @@ QPixmap myTheme::wizardHeaderLogo() const
 
 QString myTheme::appName() const
 {
-    return QLatin1String("Skylagring");
+    return QLatin1String("InternSky");
 }
 
 QString myTheme::appNameGUI() const
