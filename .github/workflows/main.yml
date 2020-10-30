@@ -24,9 +24,9 @@ jobs:
             - target: windows-msvc2017_32-cl
               os: windows-latest
               fetch-depth: 1
-            - target: windows-msvc2017_64-cl
-              os: windows-latest
-              fetch-depth: 0
+            #- target: windows-msvc2017_64-cl
+            #  os: windows-latest
+            #  fetch-depth: 0
             #- target: macos-64-clang
             #  os: macos-latest
             #  fetch-depth: 1
