@@ -5,7 +5,7 @@ set( APPLICATION_DOMAIN     "fog.fjordane-it.no" )
 set( APPLICATION_VENDOR     "Serit Fjordane IT AS" )
 set( APPLICATION_UPDATE_URL "https://deploy.fjit.no/skylagring/client/" CACHE STRING "URL for updater" )
 set( APPLICATION_CLSID      "{2414F7C5-560F-4658-A176-2C8CC61B34CE}" )
-set( APPLICATION_ICON_NAME  "InternSky" )
+set( APPLICATION_ICON_NAME  "Internsky" )
 set( APPLICATION_VIRTUALFILE_SUFFIX "InternSky" CACHE STRING "Virtual file suffix (not including the .)")
 
 set( THEME_CLASS            "MyTheme" )
