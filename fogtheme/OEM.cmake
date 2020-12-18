@@ -1,4 +1,4 @@
-set( APPLICATION_NAME       "Intern Skylagring" )
+set( APPLICATION_NAME       "InternSky" )
 set( APPLICATION_SHORTNAME  "InternSky" )
 set( APPLICATION_EXECUTABLE "InternSky" )
 set( APPLICATION_DOMAIN     "fog.fjordane-it.no" )
